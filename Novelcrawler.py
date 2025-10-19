@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-小说爬虫：输入目录页 → 下载章节 → 生成带封面的 EPUB
-支持自定义标题、作者、封面（本地或网络）
-适配 Chromium + chromedriver（已在 PATH 中）
+小说爬虫：支持混合章节格式 + 自定义规则 + 封面 + 调试HTML + 屏蔽重复置顶章
+作者：根据用户需求持续优化
 """
 
 import os
@@ -11,7 +10,7 @@ import re
 import time
 import traceback
 import requests
-from urllib.parse import urlparse
+from urllib.parse import urljoin
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
@@ -22,7 +21,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NOVEL_DIR = os.path.join(SCRIPT_DIR, "novel")
 os.makedirs(NOVEL_DIR, exist_ok=True)
 
-# Chromium 路径（Linux 常见路径，可按需修改）
+# Chromium 路径（Linux 常见路径）
 CHROMIUM_PATH = "/usr/bin/chromium"
 
 chrome_options = Options()
@@ -40,24 +39,108 @@ driver = webdriver.Chrome(options=chrome_options)
 def sanitize_filename(name):
     return re.sub(r'[\\/:*?"<>|]', '_', name).strip() or "novel"
 
-def extract_chapter_links(toc_url):
+def load_rules_from_file():
+    rules_path = os.path.join(SCRIPT_DIR, "rules.txt")
+    if os.path.exists(rules_path):
+        with open(rules_path, "r", encoding="utf-8") as f:
+            rules = [line.strip() for line in f if line.strip()]
+        print(f"✅ 从 rules.txt 加载 {len(rules)} 条规则")
+        return rules
+    else:
+        print("⚠️ rules.txt 不存在，跳过文件加载")
+        return []
+
+def get_user_rules():
+    use_custom = input("是否使用自定义章节匹配规则？(y/n，默认 n): ").strip().lower()
+    if use_custom == 'y':
+        method = input("输入方式：1=交互输入，2=从 rules.txt 加载 (默认 2): ").strip()
+        if method == '1':
+            rule = input("请输入章节标题正则表达式: ").strip()
+            if rule:
+                return [rule]
+            else:
+                print("未输入规则，使用默认规则")
+        elif method == '2' or not method:
+            rules = load_rules_from_file()
+            if rules:
+                return rules
+            else:
+                print("rules.txt 为空或不存在，使用默认规则")
+    return [
+        r'\d+\.\s*(第?\d+章?)',
+        r'第[零一二三四五六七八九十百千]+章',
+        r'第\d+章',
+        r'^\d{3,}\s+.+',
+        r'\d+\s*[-–—]\s*.*',
+        r'Chapter\s*\d+',
+        r'【[^】]*\s*\d+】',
+        r'第[零一二三四五六七八九十百千万]+[回节篇卷]'
+    ]
+
+def extract_chapter_links(toc_url, rules):
     print("正在加载目录页...")
     driver.get(toc_url)
-    time.sleep(2)
-    soup = BeautifulSoup(driver.page_source, 'lxml')
+    
+    # 自动滚动加载全部章节
+    for _ in range(8):
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1.2)
 
-    links = []
-    for a in soup.find_all('a', href=True):
+    soup = BeautifulSoup(driver.page_source, 'lxml')
+    all_a_tags = soup.find_all('a', href=True)
+    compiled_rules = [re.compile(rule, re.IGNORECASE) for rule in rules]
+    seen_hrefs = set()
+    final_links = []
+
+    for a in all_a_tags:
+        href = a['href']
+        if href.startswith('/'):
+            full_href = urljoin(toc_url, href)
+        elif not href.startswith(('http://', 'https://')):
+            full_href = toc_url.rstrip('/') + '/' + href.lstrip('/')
+        else:
+            full_href = href
+
+        if full_href in seen_hrefs:
+            continue
+
         text = a.get_text(strip=True)
-        if re.search(r'第[零一二三四五六七八九十百\d]+章', text):
-            href = a['href']
-            if href.startswith('/'):
-                from urllib.parse import urljoin
-                href = urljoin(toc_url, href)
-            elif not href.startswith(('http://', 'https://')):
-                href = toc_url.rstrip('/') + '/' + href.lstrip('/')
-            links.append((text, href))
-    return links
+        if any(pattern.search(text) for pattern in compiled_rules):
+            final_links.append((text, full_href))
+            seen_hrefs.add(full_href)
+
+    print(f"✅ 初始匹配 {len(final_links)} 章（按页面原始顺序）")
+
+    # 屏蔽前 N 章（防置顶重复）
+    skip_n = 0
+    if len(final_links) > 10:
+        try:
+            skip_input = input("是否屏蔽目录页前 N 章（防置顶重复）？(直接回车=0): ").strip()
+            skip_n = int(skip_input) if skip_input.isdigit() else 0
+        except:
+            skip_n = 0
+
+    if skip_n > 0:
+        print(f"⚠️ 屏蔽前 {skip_n} 章")
+        final_links = final_links[skip_n:]
+
+    print(f"📌 最终保留 {len(final_links)} 章")
+
+    # 预览
+    print("前5章预览:")
+    for i, (title, _) in enumerate(final_links[:5]):
+        print(f"  {i+1}. {title}")
+    if len(final_links) > 10:
+        print("后5章预览:")
+        for i, (title, _) in enumerate(final_links[-5:], start=len(final_links)-4):
+            print(f"  {i}. {title}")
+
+    confirm = input("章节顺序和内容正确吗？(y/n，默认 y): ").strip().lower()
+    if confirm in ('', 'y', 'yes'):
+        return final_links
+    else:
+        print("❌ 用户否决")
+        return []
 
 def get_chapter_content(ch_url):
     driver.get(ch_url)
@@ -65,14 +148,12 @@ def get_chapter_content(ch_url):
     page_source = driver.page_source
     soup = BeautifulSoup(page_source, 'lxml')
 
-    # 保存原始页面用于调试
     debug_dir = os.path.join(NOVEL_DIR, "debug_pages")
     os.makedirs(debug_dir, exist_ok=True)
     safe_name = re.sub(r'[\\/:*?"<>|]', '_', ch_url.replace('https://', '').replace('http://', ''))[:100]
     with open(os.path.join(debug_dir, f"{safe_name}.html"), "w", encoding="utf-8") as f:
         f.write(page_source)
 
-    # 策略1：常见正文容器
     selectors = [
         '#content', '.content', '#chapter-content', '.chapter-content',
         '.read-content', '#read-content', '.txt', '.text', '.article-content',
@@ -84,21 +165,21 @@ def get_chapter_content(ch_url):
             print(f"  ✅ 使用选择器 '{sel}' 提取成功")
             return str(elem)
 
-    # 策略2：从“第X章”标题往后找兄弟节点
-    for elem in soup.find_all(string=re.compile(r'第[零一二三四五六七八九十百\d]+章')):
-        title_elem = elem.parent
-        if title_elem and title_elem.parent:
-            parts = []
-            for sibling in title_elem.parent.next_siblings:
-                if hasattr(sibling, 'name') and sibling.name in ['p', 'div']:
-                    txt = sibling.get_text(strip=True)
-                    if len(txt) > 10:
-                        parts.append(str(sibling))
-            if parts:
-                print("  ✅ 通过标题后兄弟节点提取成功")
-                return ''.join(parts)
+    for elem in soup.find_all(string=re.compile(r'.', re.DOTALL)):
+        if elem.parent and elem.parent.name in ['h1', 'h2', 'h3', 'h4']:
+            txt = elem.strip()
+            if len(txt) > 5 and any(kw in txt for kw in ['第', '章', '回', '节', 'Chapter', 'Episode', '【']):
+                parent = elem.parent
+                parts = []
+                for sibling in parent.next_siblings:
+                    if hasattr(sibling, 'get_text'):
+                        t = sibling.get_text(strip=True)
+                        if len(t) > 10:
+                            parts.append(str(sibling))
+                if parts:
+                    print("  ✅ 通过标题后兄弟节点提取成功")
+                    return ''.join(parts)
 
-    # 策略3：退化到所有长段落
     paragraphs = soup.find_all('p')
     long_ps = [str(p) for p in paragraphs if len(p.get_text(strip=True)) > 20]
     if len(long_ps) > 2:
@@ -116,7 +197,6 @@ def create_epub(title, author, cover_path_or_url, chapters, output_dir):
     book.set_language('zh')
     book.add_author(author or "匿名")
 
-    # 处理封面
     if cover_path_or_url:
         try:
             if cover_path_or_url.startswith(('http://', 'https://')):
@@ -141,14 +221,13 @@ def create_epub(title, author, cover_path_or_url, chapters, output_dir):
                     _, ext = os.path.splitext(cover_path_or_url)
                     cover_ext = ext.lower().lstrip('.')
 
-            if cover_data:
+            if 'cover_data' in locals() and cover_data is not None:
                 cover_file_name = f"cover.{cover_ext}"
                 book.set_cover(cover_file_name, cover_data)
 
         except Exception as e:
             print(f"⚠️ 封面加载失败: {e}")
 
-    # 添加章节
     spine = ['nav']
     toc = []
     for i, (ch_title, ch_html) in enumerate(chapters):
@@ -179,14 +258,12 @@ if __name__ == '__main__':
             print("❌ 链接格式错误！")
             exit(1)
 
-        chapter_list = extract_chapter_links(TOC_URL)
-        print(f"✅ 共识别到 {len(chapter_list)} 章")
-
+        rules = get_user_rules()
+        chapter_list = extract_chapter_links(TOC_URL, rules)
         if not chapter_list:
-            print("⚠️ 没有找到任何章节，请确认页面包含“第X章”字样。")
+            print("❌ 未识别到有效章节，请检查规则或网页结构。")
             exit(1)
 
-        # 获取默认书名
         driver.get(TOC_URL)
         time.sleep(1)
         try:
@@ -194,13 +271,11 @@ if __name__ == '__main__':
         except:
             default_title = "我的小说"
 
-        # 用户自定义元数据
         print("\n--- EPUB 元数据设置（直接回车使用默认值） ---")
         custom_title = input(f"书名（默认: {default_title}）: ").strip() or default_title
         custom_author = input("作者（默认: 匿名）: ").strip() or "匿名"
         cover_input = input("封面（本地路径如 cover.jpg，或网络链接，留空则无封面）: ").strip()
 
-        # 下载章节
         chapters_content = []
         for i, (ch_title, ch_url) in enumerate(chapter_list):
             print(f"[{i+1}/{len(chapter_list)}] 正在下载：{ch_title}")
@@ -213,7 +288,6 @@ if __name__ == '__main__':
                 traceback.print_exc()
                 chapters_content.append((ch_title, "<p>加载异常</p>"))
 
-        # 生成 EPUB
         print("正在生成 EPUB...")
         epub_file = create_epub(
             title=custom_title,
