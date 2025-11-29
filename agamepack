@@ -1,0 +1,289 @@
+#!/bin/bash
+set -e
+
+# 默认值
+GAME_SOURCE_DIR="game"
+APP_NAME="Game"
+ICON_PATH=""
+PACKAGE_TYPE=""
+WINE_EXEC=""
+WINE_CMD="proton-ge"
+NWJS_PATH="$HOME/App/nwjs-sdk/nw"
+SAVE_BASE_DIR="$HOME/Game/HTMLGame/NWJS/SAVE"
+AUTO_BUILD=false
+FORCE_BUILD=false
+
+# 解析命令行参数
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -r|--game-dir)
+            GAME_SOURCE_DIR="$2"
+            shift 2
+            ;;
+        -i|--icon)
+            ICON_PATH="$2"
+            shift 2
+            ;;
+        -n|--name)
+            APP_NAME="$2"
+            shift 2
+            ;;
+        -t|--type)
+            PACKAGE_TYPE="$2"
+            shift 2
+            ;;
+        --wine-exec)
+            WINE_EXEC="$2"
+            shift 2
+            ;;
+        --wine-cmd)
+            WINE_CMD="$2"
+            shift 2
+            ;;
+        -y|--yes)
+            FORCE_BUILD=true
+            shift
+            ;;
+        -b|--build)
+            AUTO_BUILD=true
+            shift
+            ;;
+        *)
+            echo "未知参数: $1"
+            exit 1
+            ;;
+    esac
+done
+
+APP_VERSION="1.0"
+OUTPUT_DIR="build"
+APP_DIR="${OUTPUT_DIR}/${APP_NAME}.AppDir"
+APPIMAGE_NAME="${APP_NAME}-${APP_VERSION}-x86_64.AppImage"
+
+# 检查依赖
+check_dependencies() {
+    local has_appimagetool=true
+    local has_convert=true
+    
+    if ! command -v appimagetool &>/dev/null; then
+        echo "⚠️  appimagetool未安装，将跳过构建步骤"
+        has_appimagetool=false
+    fi
+    
+    if ! command -v convert &>/dev/null; then
+        echo "⚠️  imagemagick未安装，将使用默认图标"
+        has_convert=false
+    fi
+    
+    if [ "$AUTO_BUILD" = true ] && [ "$has_appimagetool" = false ]; then
+        echo "❌ 需要appimagetool来构建AppImage"
+        exit 1
+    fi
+}
+
+check_dependencies
+
+# 验证并创建游戏目录
+if [ ! -d "${GAME_SOURCE_DIR}" ]; then
+    echo "🔄 游戏目录不存在，尝试其他位置..."
+    local possible_dirs=("dist" "build" "www" ".")
+    for dir in "${possible_dirs[@]}"; do
+        if [ -d "${dir}" ] && ([ -f "${dir}/package.json" ] || [ -f "${dir}/index.html" ] || find "${dir}" -name "*.exe" -print -quit 2>/dev/null); then
+            GAME_SOURCE_DIR="${dir}"
+            echo "✅ 使用目录: ${GAME_SOURCE_DIR}"
+            break
+        fi
+    done
+    if [ ! -d "${GAME_SOURCE_DIR}" ]; then
+        echo "❌ 无法找到有效游戏目录"
+        exit 1
+    fi
+fi
+
+# 自动检测包类型
+if [ -z "${PACKAGE_TYPE}" ]; then
+    if [ -f "${GAME_SOURCE_DIR}/package.json" ] || [ -f "${GAME_SOURCE_DIR}/index.html" ]; then
+        PACKAGE_TYPE="nwjs"
+        echo "✅ 自动检测: NW.js 应用"
+    elif find "${GAME_SOURCE_DIR}" -name "*.exe" -print -quit 2>/dev/null; then
+        PACKAGE_TYPE="wine"
+        echo "✅ 自动检测: Wine/Windows 应用"
+    else
+        PACKAGE_TYPE="nwjs"
+        echo "⚠️  无法确定类型，使用默认: NW.js"
+    fi
+fi
+
+# 创建目录结构
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${APP_DIR}"
+
+# 复制游戏文件
+echo "📂 复制游戏文件: ${GAME_SOURCE_DIR} -> ${APP_DIR}"
+if ! cp -r "${GAME_SOURCE_DIR}/"* "${APP_DIR}/" 2>/dev/null; then
+    echo "⚠️  部分文件复制失败，尝试忽略错误..."
+    cp -r "${GAME_SOURCE_DIR}/"* "${APP_DIR}/" || true
+fi
+
+# 创建绝对路径符号链接
+ensure_link() {
+    local target="$1"
+    local link_name="$2"
+    [ -e "${link_name}" ] && rm -rf "${link_name}"
+    mkdir -p "$(dirname "${target}")"
+    ln -sfn "${target}" "${link_name}"
+    echo "🔗 ${link_name} -> ${target}"
+}
+
+ensure_link "${SAVE_BASE_DIR}/${APP_NAME}/save" "${APP_DIR}/save"
+mkdir -p "${APP_DIR}/www"
+ensure_link "${SAVE_BASE_DIR}/${APP_NAME}/www_save" "${APP_DIR}/www/save"
+
+# 创建AppRun
+case "${PACKAGE_TYPE}" in
+    "nwjs")
+        cat > "${APP_DIR}/AppRun" << EOF
+#!/bin/bash
+APPDIR="\$(dirname "\$(readlink -f "\$0")")"
+DESKTOP_FILE=\$(find "\${APPDIR}" -name "*.desktop" -print -quit 2>/dev/null)
+APP_NAME="${APP_NAME}"
+[ -n "\${DESKTOP_FILE}" ] && APP_NAME=\$(grep -i "^Name=" "\${DESKTOP_FILE}" | head -1 | cut -d'=' -f2)
+mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/save"
+mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/www_save"
+NWJS_PATH="${NWJS_PATH}"
+[ ! -x "\${NWJS_PATH}" ] && NWJS_PATH=\$(command -v nw 2>/dev/null || command -v node-webkit 2>/dev/null || echo "nw")
+cd "\${APPDIR}"
+exec "\${NWJS_PATH}" . --no-sandbox
+EOF
+        ;;
+    "wine")
+        if [ -z "${WINE_EXEC}" ]; then
+            WINE_EXEC=$(find "${GAME_SOURCE_DIR}" -name "*.exe" -print -quit 2>/dev/null | xargs basename)
+            if [ -z "${WINE_EXEC}" ]; then
+                echo "⚠️  未指定可执行文件，使用默认: game.exe"
+                WINE_EXEC="game.exe"
+            fi
+        fi
+        
+        cat > "${APP_DIR}/AppRun" << EOF
+#!/bin/bash
+APPDIR="\$(dirname "\$(readlink -f "\$0")")"
+DESKTOP_FILE=\$(find "\${APPDIR}" -name "*.desktop" -print -quit 2>/dev/null)
+APP_NAME="${APP_NAME}"
+[ -n "\${DESKTOP_FILE}" ] && APP_NAME=\$(grep -i "^Name=" "\${DESKTOP_FILE}" | head -1 | cut -d'=' -f2)
+mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/save"
+mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/www_save"
+WINE_CMD="${WINE_CMD}"
+WINE_EXEC="${WINE_EXEC}"
+cd "\${APPDIR}"
+[ ! -x "\$(command -v \${WINE_CMD})" ] && WINE_CMD="wine"
+exec "\${WINE_CMD}" "\${APPDIR}/\${WINE_EXEC}"
+EOF
+        ;;
+    *)
+        echo "⚠️  不支持的类型: ${PACKAGE_TYPE}，使用默认: NW.js"
+        PACKAGE_TYPE="nwjs"
+        cat > "${APP_DIR}/AppRun" << EOF
+#!/bin/bash
+APPDIR="\$(dirname "\$(readlink -f "\$0")")"
+APP_NAME="${APP_NAME}"
+mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/save"
+mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/www_save"
+NWJS_PATH="${NWJS_PATH}"
+[ ! -x "\${NWJS_PATH}" ] && NWJS_PATH=\$(command -v nw 2>/dev/null || echo "nw")
+cd "\${APPDIR}"
+exec "\${NWJS_PATH}" . --no-sandbox
+EOF
+        ;;
+esac
+
+chmod +x "${APP_DIR}/AppRun"
+
+# 创建.desktop
+cat > "${APP_DIR}/${APP_NAME}.desktop" << EOF
+[Desktop Entry]
+Name=${APP_NAME}
+Exec=AppRun
+Icon=${APP_NAME}
+Terminal=false
+Type=Application
+Categories=Game;
+X-AppImage-Version=${APP_VERSION}
+X-AppImage-Type=${PACKAGE_TYPE}
+EOF
+
+# 创建图标
+if [ -n "${ICON_PATH}" ] && [ -f "${ICON_PATH}" ]; then
+    echo "🖼️  使用自定义图标: ${ICON_PATH}"
+    cp "${ICON_PATH}" "${APP_DIR}/${APP_NAME}.png"
+else
+    echo "🎨 生成默认图标..."
+    symbol=$(echo "${APP_NAME}" | head -c 2 | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z]//g')
+    [ -z "${symbol}" ] && symbol=$(echo "${APP_NAME}" | head -c 1 | tr '[:lower:]' '[:upper:]')
+    [ -z "${symbol}" ] && symbol="G"
+    color_hex=$(printf "%06x" $((RANDOM % 0xFFFFFF)))
+    if command -v convert &>/dev/null; then
+        convert -size 256x256 xc:"#${color_hex}" \
+            -fill white -font "DejaVu-Sans-Bold" -pointsize 48 \
+            -gravity center -draw "text 0,0 '${symbol}'" \
+            "${APP_DIR}/${APP_NAME}.png" 2>/dev/null || touch "${APP_DIR}/${APP_NAME}.png"
+    else
+        touch "${APP_DIR}/${APP_NAME}.png"
+    fi
+fi
+
+# 询问是否构建
+if [ "$AUTO_BUILD" = true ] || [ "$FORCE_BUILD" = true ]; then
+    DO_BUILD="y"
+else
+    read -p "构建AppImage? [Y/n]: " DO_BUILD
+    DO_BUILD=${DO_BUILD:-Y}
+fi
+
+# 构建AppImage
+if [[ "$DO_BUILD" =~ [Yy] ]]; then
+    if command -v appimagetool &>/dev/null; then
+        echo "🚀 构建AppImage..."
+        export ARCH=x86_64
+        appimagetool "${APP_DIR}" "${APPIMAGE_NAME}"
+        
+        # 移动到当前位置
+        if [ -f "${APPIMAGE_NAME}" ]; then
+            chmod +x "${APPIMAGE_NAME}"
+            echo "✅ 构建完成: $(pwd)/${APPIMAGE_NAME}"
+        else
+            mv "${OUTPUT_DIR}/${APPIMAGE_NAME}" "./"
+            chmod +x "./${APPIMAGE_NAME}"
+            echo "✅ 构建完成: $(pwd)/${APPIMAGE_NAME}"
+        fi
+        
+        # 清理构建目录
+        read -p "清理构建目录? [Y/n]: " CLEAN_BUILD
+        CLEAN_BUILD=${CLEAN_BUILD:-Y}
+        if [[ "$CLEAN_BUILD" =~ [Yy] ]]; then
+            rm -rf "${OUTPUT_DIR}"
+            echo "🧹 构建目录已清理"
+        fi
+    else
+        echo "❌ appimagetool未安装，无法构建"
+        echo "💡 手动构建命令:"
+        echo "   cd ${OUTPUT_DIR}"
+        echo "   ARCH=x86_64 appimagetool ${APP_NAME}.AppDir ${APPIMAGE_NAME}"
+    fi
+else
+    echo "⏭️  跳过构建"
+    echo "💡 手动构建:"
+    echo "   cd ${OUTPUT_DIR}"
+    echo "   chmod +x build.sh"
+    echo "   ./build.sh"
+    
+    # 创建构建脚本
+    mkdir -p "${OUTPUT_DIR}"
+    cat > "${OUTPUT_DIR}/build.sh" << EOF
+#!/bin/bash
+set -e
+export ARCH=x86_64
+appimagetool "${APP_NAME}.AppDir" "${APPIMAGE_NAME}"
+EOF
+    chmod +x "${OUTPUT_DIR}/build.sh"
+fi
