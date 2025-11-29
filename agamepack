@@ -12,6 +12,7 @@ NWJS_PATH="$HOME/App/nwjs-sdk/nw"
 SAVE_BASE_DIR="$HOME/Game/HTMLGame/NWJS/SAVE"
 AUTO_BUILD=false
 FORCE_BUILD=false
+OUTPUT_FILENAME=""
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -48,6 +49,10 @@ while [[ $# -gt 0 ]]; do
             AUTO_BUILD=true
             shift
             ;;
+        -f|-o|--output)
+            OUTPUT_FILENAME="$2"
+            shift 2
+            ;;
         *)
             echo "未知参数: $1"
             exit 1
@@ -55,10 +60,24 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# 设置输出文件名
+if [ -z "${OUTPUT_FILENAME}" ]; then
+    # 从游戏目录名生成默认文件名
+    DIR_NAME=$(basename "$(realpath "${GAME_SOURCE_DIR}")")
+    OUTPUT_FILENAME="${DIR_NAME//[^a-zA-Z0-9._-]/}"
+    [ -z "${OUTPUT_FILENAME}" ] && OUTPUT_FILENAME="${APP_NAME}"
+    echo "📝 使用目录名作为默认文件名: ${OUTPUT_FILENAME}"
+fi
+
+# 确保有.AppImage后缀
+if [[ "${OUTPUT_FILENAME}" != *.AppImage ]]; then
+    OUTPUT_FILENAME="${OUTPUT_FILENAME}.AppImage"
+fi
+
 APP_VERSION="1.0"
 OUTPUT_DIR="build"
 APP_DIR="${OUTPUT_DIR}/${APP_NAME}.AppDir"
-APPIMAGE_NAME="${APP_NAME}-${APP_VERSION}-x86_64.AppImage"
+APPIMAGE_NAME="${OUTPUT_FILENAME}"
 
 # 检查依赖
 check_dependencies() {
@@ -118,14 +137,18 @@ fi
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${APP_DIR}"
 
-# 复制游戏文件
-echo "📂 复制游戏文件: ${GAME_SOURCE_DIR} -> ${APP_DIR}"
-if ! cp -r "${GAME_SOURCE_DIR}/"* "${APP_DIR}/" 2>/dev/null; then
+# 创建game子目录 (解决非ASCII字符问题)
+GAME_SUBDIR="${APP_DIR}/game"
+mkdir -p "${GAME_SUBDIR}"
+
+# 复制游戏文件到game子目录
+echo "📂 复制游戏文件: ${GAME_SOURCE_DIR} -> ${GAME_SUBDIR}"
+if ! cp -r "${GAME_SOURCE_DIR}/"* "${GAME_SUBDIR}/" 2>/dev/null; then
     echo "⚠️  部分文件复制失败，尝试忽略错误..."
-    cp -r "${GAME_SOURCE_DIR}/"* "${APP_DIR}/" || true
+    cp -r "${GAME_SOURCE_DIR}/"* "${GAME_SUBDIR}/" || true
 fi
 
-# 创建绝对路径符号链接
+# 创建绝对路径符号链接 - 统一存档目录
 ensure_link() {
     local target="$1"
     local link_name="$2"
@@ -135,9 +158,14 @@ ensure_link() {
     echo "🔗 ${link_name} -> ${target}"
 }
 
-ensure_link "${SAVE_BASE_DIR}/${APP_NAME}/save" "${APP_DIR}/save"
-mkdir -p "${APP_DIR}/www"
-ensure_link "${SAVE_BASE_DIR}/${APP_NAME}/www_save" "${APP_DIR}/www/save"
+# 统一存档目录路径
+GAME_SAVE_DIR="${SAVE_BASE_DIR}/${APP_NAME}"
+
+# 所有save链接都指向同一个目录
+ensure_link "${GAME_SAVE_DIR}" "${APP_DIR}/save"
+ensure_link "${GAME_SAVE_DIR}" "${GAME_SUBDIR}/save"
+mkdir -p "${GAME_SUBDIR}/www"
+ensure_link "${GAME_SAVE_DIR}" "${GAME_SUBDIR}/www/save"
 
 # 创建AppRun
 case "${PACKAGE_TYPE}" in
@@ -148,17 +176,17 @@ APPDIR="\$(dirname "\$(readlink -f "\$0")")"
 DESKTOP_FILE=\$(find "\${APPDIR}" -name "*.desktop" -print -quit 2>/dev/null)
 APP_NAME="${APP_NAME}"
 [ -n "\${DESKTOP_FILE}" ] && APP_NAME=\$(grep -i "^Name=" "\${DESKTOP_FILE}" | head -1 | cut -d'=' -f2)
-mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/save"
-mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/www_save"
+SAVE_DIR="${SAVE_BASE_DIR}/\${APP_NAME}"
+mkdir -p "\${SAVE_DIR}"
 NWJS_PATH="${NWJS_PATH}"
 [ ! -x "\${NWJS_PATH}" ] && NWJS_PATH=\$(command -v nw 2>/dev/null || command -v node-webkit 2>/dev/null || echo "nw")
-cd "\${APPDIR}"
+cd "\${APPDIR}/game"
 exec "\${NWJS_PATH}" . --no-sandbox
 EOF
         ;;
     "wine")
         if [ -z "${WINE_EXEC}" ]; then
-            WINE_EXEC=$(find "${GAME_SOURCE_DIR}" -name "*.exe" -print -quit 2>/dev/null | xargs basename)
+            WINE_EXEC=$(find "${GAME_SUBDIR}" -name "*.exe" -print -quit 2>/dev/null | xargs basename)
             if [ -z "${WINE_EXEC}" ]; then
                 echo "⚠️  未指定可执行文件，使用默认: game.exe"
                 WINE_EXEC="game.exe"
@@ -171,13 +199,13 @@ APPDIR="\$(dirname "\$(readlink -f "\$0")")"
 DESKTOP_FILE=\$(find "\${APPDIR}" -name "*.desktop" -print -quit 2>/dev/null)
 APP_NAME="${APP_NAME}"
 [ -n "\${DESKTOP_FILE}" ] && APP_NAME=\$(grep -i "^Name=" "\${DESKTOP_FILE}" | head -1 | cut -d'=' -f2)
-mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/save"
-mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/www_save"
+SAVE_DIR="${SAVE_BASE_DIR}/\${APP_NAME}"
+mkdir -p "\${SAVE_DIR}"
 WINE_CMD="${WINE_CMD}"
 WINE_EXEC="${WINE_EXEC}"
-cd "\${APPDIR}"
+cd "\${APPDIR}/game"
 [ ! -x "\$(command -v \${WINE_CMD})" ] && WINE_CMD="wine"
-exec "\${WINE_CMD}" "\${APPDIR}/\${WINE_EXEC}"
+exec "\${WINE_CMD}" "\${WINE_EXEC}"
 EOF
         ;;
     *)
@@ -187,11 +215,11 @@ EOF
 #!/bin/bash
 APPDIR="\$(dirname "\$(readlink -f "\$0")")"
 APP_NAME="${APP_NAME}"
-mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/save"
-mkdir -p "${SAVE_BASE_DIR}/\${APP_NAME}/www_save"
+SAVE_DIR="${SAVE_BASE_DIR}/\${APP_NAME}"
+mkdir -p "\${SAVE_DIR}"
 NWJS_PATH="${NWJS_PATH}"
 [ ! -x "\${NWJS_PATH}" ] && NWJS_PATH=\$(command -v nw 2>/dev/null || echo "nw")
-cd "\${APPDIR}"
+cd "\${APPDIR}/game"
 exec "\${NWJS_PATH}" . --no-sandbox
 EOF
         ;;
@@ -243,23 +271,30 @@ fi
 # 构建AppImage
 if [[ "$DO_BUILD" =~ [Yy] ]]; then
     if command -v appimagetool &>/dev/null; then
-        echo "🚀 构建AppImage..."
+        echo "🚀 构建AppImage: ${APPIMAGE_NAME}"
         export ARCH=x86_64
-        appimagetool "${APP_DIR}" "${APPIMAGE_NAME}"
+        appimagetool "${APP_DIR}" "${OUTPUT_DIR}/${APPIMAGE_NAME}"
         
         # 移动到当前位置
-        if [ -f "${APPIMAGE_NAME}" ]; then
-            chmod +x "${APPIMAGE_NAME}"
-            echo "✅ 构建完成: $(pwd)/${APPIMAGE_NAME}"
-        else
-            mv "${OUTPUT_DIR}/${APPIMAGE_NAME}" "./"
+        if [ -f "${OUTPUT_DIR}/${APPIMAGE_NAME}" ]; then
+            mv "${OUTPUT_DIR}/${APPIMAGE_NAME}" "./${APPIMAGE_NAME}"
             chmod +x "./${APPIMAGE_NAME}"
             echo "✅ 构建完成: $(pwd)/${APPIMAGE_NAME}"
+            echo "🔍 挂载后路径: /tmp/.mount_XXXX/game/ (兼容非ASCII字符)"
+            echo "💾 统一存档位置: ${GAME_SAVE_DIR}"
+        else
+            echo "❌ 构建失败，文件未找到"
+            exit 1
         fi
         
         # 清理构建目录
-        read -p "清理构建目录? [Y/n]: " CLEAN_BUILD
-        CLEAN_BUILD=${CLEAN_BUILD:-Y}
+        if [ "$FORCE_BUILD" = true ]; then
+            CLEAN_BUILD="y"
+        else
+            read -p "清理构建目录? [Y/n]: " CLEAN_BUILD
+            CLEAN_BUILD=${CLEAN_BUILD:-Y}
+        fi
+        
         if [[ "$CLEAN_BUILD" =~ [Yy] ]]; then
             rm -rf "${OUTPUT_DIR}"
             echo "🧹 构建目录已清理"
