@@ -88,26 +88,22 @@ func main() {
 	if cfg.GameSourceDir == "" {
 		cfg.GameSourceDir = *gameDirLong
 	}
-
 	cfg.AppName = *name
 	if cfg.AppName == "" {
 		cfg.AppName = *nameLong
 	}
-
 	cfg.IconPath = *icon
 	if cfg.IconPath == "" {
 		cfg.IconPath = *iconLong
 	}
-
 	cfg.PackageType = *pkgType
 	if cfg.PackageType == "" {
 		cfg.PackageType = *pkgTypeLong
 	}
-
 	cfg.WineExec = *wineExec
 	cfg.WineCmd = *wineCmd
 	cfg.WineSaveDir = *wineSaveDir
-	
+
 	// 处理根目录存档文件
 	rootSaveFiles := *rootSave
 	if rootSaveFiles == "" {
@@ -124,7 +120,6 @@ func main() {
 	if cfg.OutputFilename == "" {
 		cfg.OutputFilename = *outputLong
 	}
-
 	cfg.SavePattern = *savePattern
 	cfg.SaveStart = *saveStart
 	cfg.SaveEnd = *saveEnd
@@ -159,7 +154,7 @@ func showHelp() {
 	fmt.Println("用法: agamepack [选项]")
 	fmt.Println("")
 	fmt.Println("构建AppImage游戏包，支持NW.js和Wine/Windows游戏")
-	fmt.Println("支持目录重定向和自定义存档模式，100%只读文件系统安全")
+	fmt.Println("【已移除AppStream metadata】完全移除了AppStream metadata以避免验证失败")
 	fmt.Println("")
 	fmt.Println("选项:")
 	fmt.Println("  -r, --game-dir DIR     游戏源目录")
@@ -203,13 +198,11 @@ func runInteractiveMode() {
 		if dir == "" {
 			dir = "./"
 		}
-
 		absPath, err := filepath.Abs(dir)
 		if err != nil {
 			fmt.Printf("❌ 路径错误: %v\n", err)
 			continue
 		}
-
 		if _, err := os.Stat(absPath); os.IsNotExist(err) {
 			fmt.Printf("❌ 目录不存在: %s\n", absPath)
 			var create string
@@ -241,7 +234,32 @@ func runInteractiveMode() {
 	}
 	cfg.AppName = name
 
-	// 3. 图标文件
+	// 3. 输出文件名
+	defaultOutput := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, cfg.AppName)
+	if defaultOutput == "" {
+		defaultOutput = "Game"
+	}
+	if !strings.HasSuffix(defaultOutput, ".AppImage") {
+		defaultOutput += ".AppImage"
+	}
+	fmt.Printf("输出文件名 (默认: %s): ", defaultOutput)
+	var outputName string
+	fmt.Scanln(&outputName)
+	if outputName == "" {
+		outputName = defaultOutput
+	}
+	// 确保有.AppImage后缀
+	if !strings.HasSuffix(outputName, ".AppImage") {
+		outputName += ".AppImage"
+	}
+	cfg.OutputFilename = outputName
+
+	// 4. 图标文件
 	fmt.Print("自定义图标文件 (留空使用默认生成): ")
 	var iconPath string
 	fmt.Scanln(&iconPath)
@@ -259,13 +277,12 @@ func runInteractiveMode() {
 		}
 	}
 
-	// 4. 游戏类型
+	// 5. 游戏类型
 	fmt.Println("")
 	fmt.Println("游戏类型:")
 	fmt.Println("1. NW.js/HTML5 游戏 (package.json 或 index.html)")
 	fmt.Println("2. Wine/Windows 游戏 (*.exe 文件)")
 	fmt.Println("3. RPG Maker 游戏 (www/ 目录)")
-
 	for {
 		var choice string
 		fmt.Print("选择类型 [1-3]: ")
@@ -273,7 +290,6 @@ func runInteractiveMode() {
 		if choice == "" {
 			choice = "1"
 		}
-
 		switch choice {
 		case "1":
 			cfg.PackageType = "nwjs"
@@ -300,11 +316,9 @@ func setupRootSaveFilesInteractive() {
 		for i, file := range rootFiles {
 			fmt.Printf("  %d. %s\n", i+1, file)
 		}
-		
 		var choices string
 		fmt.Print("选择要重定向的文件 (例如: 1,2,3 或 0 跳过): ")
 		fmt.Scanln(&choices)
-		
 		if choices != "0" && choices != "" {
 			selected := strings.Split(choices, ",")
 			for _, choice := range selected {
@@ -316,7 +330,7 @@ func setupRootSaveFilesInteractive() {
 			}
 		}
 	}
-	
+
 	if len(cfg.RootSaveFiles) == 0 {
 		var manualFiles string
 		fmt.Print("手动指定根目录存档文件 (逗号分隔，例如: save.dat,config.ini，留空跳过): ")
@@ -331,7 +345,7 @@ func setupRootSaveFilesInteractive() {
 			}
 		}
 	}
-	
+
 	if len(cfg.RootSaveFiles) > 0 {
 		fmt.Printf("✅ 选择根目录存档文件: %v\n", cfg.RootSaveFiles)
 	}
@@ -347,7 +361,6 @@ func setupWineInteractive() {
 		for i, file := range exeFiles {
 			fmt.Printf("  %d. %s\n", i+1, file)
 		}
-
 		for {
 			var choice string
 			fmt.Printf("选择可执行文件 [1]: ")
@@ -355,7 +368,6 @@ func setupWineInteractive() {
 			if choice == "" {
 				choice = "1"
 			}
-
 			index := 1
 			if choice != "" {
 				parsed, err := strconv.Atoi(choice)
@@ -363,7 +375,6 @@ func setupWineInteractive() {
 					index = parsed
 				}
 			}
-
 			if index >= 1 && index <= len(exeFiles) {
 				cfg.WineExec = exeFiles[index-1]
 				fmt.Printf("✅ 选择: %s\n", cfg.WineExec)
@@ -392,14 +403,12 @@ func setupWineInteractive() {
 	fmt.Println("2. 根目录存档文件 (例如: save.dat, config.ini)")
 	fmt.Println("3. 自定义文件模式 (Save01, Save02...)")
 	fmt.Println("4. 混合模式 (目录 + 根目录文件)")
-
 	var choice string
 	fmt.Print("选择存档方式 (推荐 2 或 4): ")
 	fmt.Scanln(&choice)
 	if choice == "" {
 		choice = "2"
 	}
-
 	switch choice {
 	case "1":
 		setupWineSaveDirInteractive()
@@ -424,7 +433,6 @@ func setupWineSaveDirInteractive() {
 		for i, dir := range saveDirs {
 			fmt.Printf("  %d. %s\n", i+1, dir)
 		}
-
 		for {
 			var choice string
 			fmt.Printf("选择存档目录 [1]: ")
@@ -432,7 +440,6 @@ func setupWineSaveDirInteractive() {
 			if choice == "" {
 				choice = "1"
 			}
-
 			index := 1
 			if choice != "" {
 				parsed, err := strconv.Atoi(choice)
@@ -440,7 +447,6 @@ func setupWineSaveDirInteractive() {
 					index = parsed
 				}
 			}
-
 			if index >= 1 && index <= len(saveDirs) {
 				cfg.WineSaveDir = saveDirs[index-1]
 				fmt.Printf("✅ 选择存档目录: %s\n", cfg.WineSaveDir)
@@ -471,7 +477,6 @@ func setupCustomSavePatternInteractive() {
 		pattern = "Save%02d.rvdata2"
 	}
 	cfg.SavePattern = pattern
-
 	fmt.Print("起始编号 (默认: 1): ")
 	var startStr string
 	fmt.Scanln(&startStr)
@@ -483,7 +488,6 @@ func setupCustomSavePatternInteractive() {
 		}
 	}
 	cfg.SaveStart = start
-
 	fmt.Print("结束编号 (默认: 9): ")
 	var endStr string
 	fmt.Scanln(&endStr)
@@ -529,6 +533,30 @@ func completeConfig() {
 		fmt.Printf("✅ 使用目录名作为应用名称: %s\n", cfg.AppName)
 	}
 
+	// 补全输出文件名
+	if cfg.OutputFilename == "" {
+		cleanName := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+				return r
+			}
+			return -1
+		}, cfg.AppName)
+		if cleanName == "" {
+			cleanName = "Game"
+		}
+		// 确保有.AppImage后缀
+		if !strings.HasSuffix(cleanName, ".AppImage") {
+			cleanName += ".AppImage"
+		}
+		cfg.OutputFilename = cleanName
+		fmt.Printf("📝 使用目录名作为默认文件名: %s\n", cfg.OutputFilename)
+	} else {
+		// 确保有.AppImage后缀
+		if !strings.HasSuffix(cfg.OutputFilename, ".AppImage") {
+			cfg.OutputFilename += ".AppImage"
+		}
+	}
+
 	// 补全包类型
 	if cfg.PackageType == "" {
 		if isNWJSApp(cfg.GameSourceDir) {
@@ -552,30 +580,6 @@ func completeConfig() {
 		} else {
 			cfg.WineExec = "game.exe"
 			fmt.Printf("⚠️  未指定可执行文件，使用默认: %s\n", cfg.WineExec)
-		}
-	}
-
-	// 补全输出文件名
-	if cfg.OutputFilename == "" {
-		cleanName := strings.Map(func(r rune) rune {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-				return r
-			}
-			return -1
-		}, cfg.AppName)
-		if cleanName == "" {
-			cleanName = "Game"
-		}
-		// 确保有.AppImage后缀
-		if !strings.HasSuffix(cleanName, ".AppImage") {
-			cleanName += ".AppImage"
-		}
-		cfg.OutputFilename = cleanName
-		fmt.Printf("📝 使用目录名作为默认文件名: %s\n", cfg.OutputFilename)
-	} else {
-		// 确保有.AppImage后缀
-		if !strings.HasSuffix(cfg.OutputFilename, ".AppImage") {
-			cfg.OutputFilename += ".AppImage"
 		}
 	}
 }
@@ -606,15 +610,22 @@ func validateConfig() error {
 
 func buildAppImage() {
 	fmt.Printf("📂 复制游戏文件: %s -> build/%s.AppDir/game\n", cfg.GameSourceDir, cfg.AppName)
-
+	
 	// 创建目录结构
 	appDir := filepath.Join("build", cfg.AppName+".AppDir")
 	gameSubDir := filepath.Join(appDir, "game")
+	
+	// 清理旧的构建目录
 	os.RemoveAll("build")
+	
+	// 确保目标目录存在
 	os.MkdirAll(gameSubDir, 0755)
-
+	
 	// 复制游戏文件
-	copyDir(cfg.GameSourceDir, gameSubDir)
+	if err := copyDir(cfg.GameSourceDir, gameSubDir); err != nil {
+		fmt.Printf("❌ 复制文件失败: %v\n", err)
+		os.Exit(1)
+	}
 
 	// 存档处理
 	if cfg.PackageType == "wine" {
@@ -622,24 +633,39 @@ func buildAppImage() {
 		wineArchiveDir := filepath.Join(cfg.WineArchiveBaseDir, cfg.AppName)
 		os.MkdirAll(wineArchiveDir, 0755)
 		fmt.Printf("📁 固定Archive目录: %s\n", wineArchiveDir)
-
+		
 		// 1. 目录重定向模式
 		if cfg.WineSaveDir != "" {
 			fmt.Printf("🔗 目录重定向模式: %s/\n", cfg.WineSaveDir)
 			wineSavePath := filepath.Join(gameSubDir, cfg.WineSaveDir)
 			targetSavePath := filepath.Join(wineArchiveDir, cfg.WineSaveDir)
-			os.MkdirAll(filepath.Dir(targetSavePath), 0755)
-
+			
+			// 确保目标目录存在
+			os.MkdirAll(targetSavePath, 0755)
+			
+			// 安全地创建符号链接 - 先移除目标（如果存在）
+			if _, err := os.Stat(wineSavePath); err == nil {
+				if isDir(wineSavePath) {
+					os.RemoveAll(wineSavePath)
+				} else {
+					os.Remove(wineSavePath)
+				}
+			}
+			
 			// 创建符号链接
-			os.Remove(wineSavePath)
 			if err := os.Symlink(targetSavePath, wineSavePath); err != nil {
 				fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+				
+				// 如果符号链接创建失败，尝试直接复制内容
+				fmt.Println("🔄 尝试直接复制存档文件...")
+				if err := copyDirIfExists(targetSavePath, wineSavePath); err != nil {
+					fmt.Printf("⚠️  复制存档文件失败，但将继续: %v\n", err)
+				}
 			} else {
-				fmt.Printf("🔗 %s -> %s\n", wineSavePath, targetSavePath)
+				fmt.Printf("✅ 目录重定向完成: %s -> %s\n", wineSavePath, targetSavePath)
 			}
-			fmt.Println("✅ 目录重定向完成")
 		}
-
+		
 		// 2. 根目录存档文件
 		if len(cfg.RootSaveFiles) > 0 {
 			fmt.Printf("🔗 根目录存档文件: %v\n", cfg.RootSaveFiles)
@@ -648,50 +674,65 @@ func buildAppImage() {
 				sourceFile := filepath.Join(gameSubDir, filename)
 				targetFile := filepath.Join(wineArchiveDir, filename)
 				
-				// 只创建不存在的链接
-				if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
-					os.MkdirAll(filepath.Dir(targetFile), 0755)
-					os.Remove(sourceFile)
-					if err := os.Symlink(targetFile, sourceFile); err != nil {
-						fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+				// 确保目标目录存在
+				os.MkdirAll(filepath.Dir(targetFile), 0755)
+				
+				// 安全地创建符号链接
+				if _, err := os.Stat(sourceFile); err == nil {
+					if isDir(sourceFile) {
+						os.RemoveAll(sourceFile)
 					} else {
-						fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
-						totalLinks++
+						os.Remove(sourceFile)
 					}
 				}
+				
+				if err := os.Symlink(targetFile, sourceFile); err != nil {
+					fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+					
+					// 尝试复制文件内容
+					if _, err := os.Stat(targetFile); err == nil {
+						copyFile(targetFile, sourceFile)
+					}
+				} else {
+					fmt.Printf("✅ 根目录存档链接: %s -> %s\n", sourceFile, targetFile)
+					totalLinks++
+				}
 			}
-			fmt.Printf("✅ 总共预创建 %d 个根目录存档链接\n", totalLinks)
+			fmt.Printf("✅ 总共创建 %d 个根目录存档链接\n", totalLinks)
 		}
-
+		
 		// 3. 自定义文件模式 (如果没有其他存档设置)
 		if cfg.WineSaveDir == "" && len(cfg.RootSaveFiles) == 0 {
 			fmt.Printf("🔗 创建自定义存档链接: %s (%d to %d)\n",
 				cfg.SavePattern, cfg.SaveStart, cfg.SaveEnd)
-
 			totalLinks := 0
 			for i := cfg.SaveStart; i <= cfg.SaveEnd; i++ {
 				filename := fmt.Sprintf(cfg.SavePattern, i)
 				sourceFile := filepath.Join(gameSubDir, filename)
 				targetFile := filepath.Join(wineArchiveDir, filename)
-
-				if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
-					os.MkdirAll(filepath.Dir(targetFile), 0755)
+				
+				// 确保目标目录存在
+				os.MkdirAll(filepath.Dir(targetFile), 0755)
+				
+				// 安全地创建符号链接
+				if _, err := os.Stat(sourceFile); err == nil {
 					os.Remove(sourceFile)
-					if err := os.Symlink(targetFile, sourceFile); err != nil {
-						fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
-					} else {
-						fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
-						totalLinks++
-					}
+				}
+				
+				if err := os.Symlink(targetFile, sourceFile); err != nil {
+					fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+				} else {
+					fmt.Printf("✅ 自定义存档链接: %s -> %s\n", sourceFile, targetFile)
+					totalLinks++
 				}
 			}
-			fmt.Printf("✅ 总共预创建 %d 个存档链接\n", totalLinks)
+			fmt.Printf("✅ 总共创建 %d 个自定义存档链接\n", totalLinks)
 		}
 	} else {
 		// NW.js: 统一存档目录
 		gameSaveDir := filepath.Join(cfg.SaveBaseDir, cfg.AppName)
 		os.MkdirAll(gameSaveDir, 0755)
-
+		
 		// 创建标准链接
 		createLink(gameSaveDir, filepath.Join(appDir, "save"))
 		createLink(gameSaveDir, filepath.Join(gameSubDir, "save"))
@@ -706,37 +747,43 @@ func buildAppImage() {
 				sourceFile := filepath.Join(appDir, filename)
 				targetFile := filepath.Join(gameSaveDir, filename)
 				
-				if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
-					os.MkdirAll(filepath.Dir(targetFile), 0755)
+				// 确保目标目录存在
+				os.MkdirAll(filepath.Dir(targetFile), 0755)
+				
+				// 安全地创建符号链接
+				if _, err := os.Stat(sourceFile); err == nil {
 					os.Remove(sourceFile)
-					if err := os.Symlink(targetFile, sourceFile); err != nil {
-						fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
-					} else {
-						fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
-						totalLinks++
-					}
+				}
+				
+				if err := os.Symlink(targetFile, sourceFile); err != nil {
+					fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+				} else {
+					fmt.Printf("✅ 根目录存档链接: %s -> %s\n", sourceFile, targetFile)
+					totalLinks++
 				}
 			}
-			fmt.Printf("✅ 总共预创建 %d 个根目录存档链接\n", totalLinks)
+			fmt.Printf("✅ 总共创建 %d 个根目录存档链接\n", totalLinks)
 		}
 	}
 
 	// 创建AppRun
 	createAppRun(appDir)
-
+	
 	// 创建.desktop
 	createDesktopFile(appDir)
-
+	
 	// 创建图标
 	createIconFile(appDir)
-
-	// 创建AppStream metadata
-	createAppStreamMetadata(appDir)
-
+	
 	// 构建AppImage
 	if cfg.AutoBuild || cfg.ForceBuild || askForConfirmation("构建AppImage? [Y/n]: ", true) {
 		buildWithAppImageTool(appDir)
-		// 不在这里清理构建目录，只在构建成功后清理
+		
+		// 构建成功后清理构建目录
+		if cfg.ForceBuild || askForConfirmation("清理构建目录? [Y/n]: ", true) {
+			os.RemoveAll("build")
+			fmt.Println("🧹 构建目录已清理")
+		}
 	}
 }
 
@@ -787,7 +834,7 @@ func findSaveDirectories(dir string) []string {
 		}
 		if d.IsDir() {
 			dirName := strings.ToLower(filepath.Base(path))
-			if dirName == "save" || dirName == "saves" || dirName == "data" || dirName == "userdata" {
+			if dirName == "save" || dirName == "saves" || dirName == "data" || dirName == "userdata" || dirName == "mcsc" {
 				relPath, _ := filepath.Rel(dir, path)
 				saveDirs = append(saveDirs, relPath)
 			}
@@ -806,7 +853,8 @@ func findRootSaveFiles(dir string) []string {
 		if !d.IsDir() {
 			filename := strings.ToLower(d.Name())
 			// 常见的存档文件扩展名
-			for _, ext := range []string{".sav", ".save", ".dat", ".ini", ".cfg", ".conf", ".json"} {
+			extensions := []string{".sav", ".save", ".dat", ".ini", ".cfg", ".conf", ".json", ".bin", ".srm"}
+			for _, ext := range extensions {
 				if strings.HasSuffix(filename, ext) {
 					relPath, _ := filepath.Rel(dir, path)
 					saveFiles = append(saveFiles, relPath)
@@ -824,36 +872,85 @@ func copyDir(src string, dst string) error {
 		if err != nil {
 			return err
 		}
-
+		
+		// 跳过符号链接
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		
 		relPath, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
 		}
 		dstPath := filepath.Join(dst, relPath)
-
+		
 		if d.IsDir() {
 			return os.MkdirAll(dstPath, 0755)
 		}
-
+		
 		srcFile, err := os.Open(path)
 		if err != nil {
 			return err
 		}
 		defer srcFile.Close()
-
+		
 		dstFile, err := os.Create(dstPath)
 		if err != nil {
 			return err
 		}
 		defer dstFile.Close()
-
+		
 		_, err = io.Copy(dstFile, srcFile)
 		return err
 	})
 }
 
+func copyDirIfExists(src string, dst string) error {
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil
+	}
+	return copyDir(src, dst)
+}
+
+func copyFile(src, dst string) error {
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil
+	}
+	
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+	
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+	
+	_, err = io.Copy(dstFile, srcFile)
+	return err
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 func createLink(target string, link string) {
-	os.Remove(link)
+	// 确保目标目录存在
+	os.MkdirAll(target, 0755)
+	
+	// 安全地创建符号链接
+	if _, err := os.Stat(link); err == nil {
+		if isDir(link) {
+			os.RemoveAll(link)
+		} else {
+			os.Remove(link)
+		}
+	}
+	
 	os.MkdirAll(filepath.Dir(link), 0755)
 	if err := os.Symlink(target, link); err != nil {
 		fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
@@ -863,7 +960,6 @@ func createLink(target string, link string) {
 func createAppRun(appDir string) {
 	appRunPath := filepath.Join(appDir, "AppRun")
 	var content string
-
 	if cfg.PackageType == "wine" {
 		content = fmt.Sprintf(`#!/bin/bash
 # AppRun - Wine专用
@@ -871,17 +967,19 @@ APPDIR="$(dirname "$(readlink -f "$0")")"
 DESKTOP_FILE=$(find "${APPDIR}" -name "*.desktop" -print -quit 2>/dev/null)
 APP_NAME="%s"
 [ -n "${DESKTOP_FILE}" ] && APP_NAME=$(grep -i "^Name=" "${DESKTOP_FILE}" | head -1 | cut -d'=' -f2)
-
 # 固定Archive目录
 WINE_ARCHIVE_DIR="%s/${APP_NAME}"
 mkdir -p "${WINE_ARCHIVE_DIR}" 2>/dev/null || true
-
 # 运行游戏
 cd "${APPDIR}/game"
 WINE_CMD="%s"
 [ ! -x "$(command -v ${WINE_CMD})" ] && WINE_CMD="wine"
+# 确保存档目录存在
+if [ -n "%s" ]; then
+    mkdir -p "${WINE_ARCHIVE_DIR}/%s" 2>/dev/null || true
+fi
 exec "${WINE_CMD}" "%s"
-`, cfg.AppName, cfg.WineArchiveBaseDir, cfg.WineCmd, cfg.WineExec)
+`, cfg.AppName, cfg.WineArchiveBaseDir, cfg.WineCmd, cfg.WineSaveDir, cfg.WineSaveDir, cfg.WineExec)
 	} else {
 		content = fmt.Sprintf(`#!/bin/bash
 APPDIR="$(dirname "$(readlink -f "$0")")"
@@ -896,7 +994,7 @@ cd "${APPDIR}/game"
 exec "${NWJS_PATH}" . --no-sandbox
 `, cfg.AppName, cfg.SaveBaseDir, cfg.NWJSPath)
 	}
-
+	
 	err := os.WriteFile(appRunPath, []byte(content), 0755)
 	if err != nil {
 		fmt.Printf("❌ 创建AppRun失败: %v\n", err)
@@ -913,10 +1011,8 @@ Icon=%s
 Terminal=false
 Type=Application
 Categories=Game;
-X-AppImage-Version=1.0
-X-AppImage-Type=%s
-X-AppImage-Identifier=%s
-`, cfg.AppName, cfg.AppName, cfg.PackageType, cfg.AppName)
+`, cfg.AppName, cfg.AppName)
+	
 	err := os.WriteFile(desktopPath, []byte(content), 0644)
 	if err != nil {
 		fmt.Printf("❌ 创建.desktop文件失败: %v\n", err)
@@ -926,7 +1022,6 @@ X-AppImage-Identifier=%s
 
 func createIconFile(appDir string) {
 	iconPath := filepath.Join(appDir, cfg.AppName+".png")
-
 	if cfg.IconPath != "" {
 		if file, err := os.Open(cfg.IconPath); err == nil {
 			defer file.Close()
@@ -939,16 +1034,15 @@ func createIconFile(appDir string) {
 			}
 		}
 	}
-
+	
 	fmt.Println("🎨 生成默认图标...")
 	symbol := getFirstTwoLetters(cfg.AppName)
-	
 	// 修复类型错误: 将UnixNano()和Unix()结果都转换为int
 	nanoPart := int(time.Now().UnixNano()) % 0xFFFFFF
 	unixPart := int(time.Now().Unix()) % 0xFFFFFF
 	colorHex := fmt.Sprintf("%06x", (nanoPart + unixPart) % 0xFFFFFF)
 	color := "#" + colorHex
-
+	
 	// 检查ImageMagick命令
 	convertCmd := "convert"
 	if _, err := exec.LookPath(convertCmd); err != nil {
@@ -958,7 +1052,7 @@ func createIconFile(appDir string) {
 			convertCmd = ""
 		}
 	}
-
+	
 	// 生成图标
 	if convertCmd != "" {
 		var cmdArgs []string
@@ -979,7 +1073,6 @@ func createIconFile(appDir string) {
 				iconPath,
 			}
 		}
-		
 		// 执行命令
 		var cmd *exec.Cmd
 		if convertCmd == "magick" {
@@ -987,59 +1080,18 @@ func createIconFile(appDir string) {
 		} else {
 			cmd = exec.Command("convert", cmdArgs...)
 		}
-		
 		err := cmd.Run()
 		if err == nil && fileExists(iconPath) {
 			return
 		}
 	}
-
+	
 	// 创建简单的占位符文件
 	err := os.WriteFile(iconPath, []byte("dummy icon"), 0644)
 	if err == nil {
 		fmt.Println("⚠️  无法生成图标，使用占位符")
 	} else {
 		fmt.Printf("❌ 创建图标文件失败: %v\n", err)
-	}
-}
-
-func createAppStreamMetadata(appDir string) {
-	metainfoDir := filepath.Join(appDir, "usr", "share", "metainfo")
-	os.MkdirAll(metainfoDir, 0755)
-	
-	metainfoPath := filepath.Join(metainfoDir, cfg.AppName+".appdata.xml")
-	
-	// 从AppName中提取ID (移除非字母数字字符)
-	appID := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
-			return r
-		}
-		return -1
-	}, cfg.AppName)
-	
-	// 生成一个简单的AppStream metadata
-	content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!-- Copyright %d %s -->
-<component type="desktop-application">
-  <id>%s.desktop</id>
-  <metadata_license>CC0-1.0</metadata_license>
-  <project_license>Proprietary</project_license>
-  <name>%s</name>
-  <summary>%s game packaged as AppImage</summary>
-  <description>
-    <p>%s is a game packaged as an AppImage for easy distribution and execution.</p>
-  </description>
-  <launchable type="desktop-id">%s.desktop</launchable>
-  <url type="homepage">https://appimage.org/</url>
-  <project_group>AppImage</project_group>
-</component>
-`, time.Now().Year(), cfg.AppName, appID, cfg.AppName, cfg.AppName, cfg.AppName, appID)
-
-	err := os.WriteFile(metainfoPath, []byte(content), 0644)
-	if err == nil {
-		fmt.Printf("✅ 创建AppStream metadata: %s\n", metainfoPath)
-	} else {
-		fmt.Printf("⚠️  创建AppStream metadata失败: %v\n", err)
 	}
 }
 
@@ -1055,7 +1107,6 @@ func buildWithAppImageTool(appDir string) {
 			}
 		}
 	}
-	
 	if _, err := exec.LookPath(appimagetoolPath); err != nil {
 		fmt.Printf("❌ appimagetool未安装: %v\n", err)
 		fmt.Println("💡 安装命令 (Debian/Ubuntu): sudo apt-get install appimagetool")
@@ -1065,20 +1116,19 @@ func buildWithAppImageTool(appDir string) {
 		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", appimagetoolPath, filepath.Base(appDir), cfg.OutputFilename)
 		return
 	}
-
-	buildOutput := filepath.Join("build", cfg.OutputFilename)
 	
+	buildOutput := filepath.Join("build", cfg.OutputFilename)
 	fmt.Printf("🚀 构建AppImage: %s\n", cfg.OutputFilename)
 	fmt.Printf("   📁 源目录: %s\n", appDir)
 	fmt.Printf("   🎯 输出: %s\n", buildOutput)
-
+	
 	// 确保输出目录存在
 	os.MkdirAll(filepath.Dir(buildOutput), 0755)
-
+	
 	// 设置环境变量
 	env := os.Environ()
 	env = append(env, "ARCH=x86_64")
-
+	
 	// 关键修正：使用相对路径
 	appDirName := filepath.Base(appDir) // 只取目录名，不包含build/
 	
@@ -1091,10 +1141,8 @@ func buildWithAppImageTool(appDir string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Dir = "build"  // 在build目录中执行
-	
 	fmt.Printf("🔧 工作目录: %s\n", cmd.Dir)
 	fmt.Printf("🔧 命令: %s %s %s\n", appimagetoolPath, appDirName, cfg.OutputFilename)
-	
 	err := cmd.Run()
 	if err != nil {
 		fmt.Printf("❌ 构建失败: %v\n", err)
@@ -1130,10 +1178,11 @@ func buildWithAppImageTool(appDir string) {
 		// 提示手动构建
 		fmt.Println("\n💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
-		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", appimagetoolPath, appDirName, cfg.OutputFilename)
+		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", 
+			appimagetoolPath, appDirName, cfg.OutputFilename)
 		return
 	}
-
+	
 	// 检查构建结果
 	if fileExists(buildOutput) {
 		// 移动到当前位置
@@ -1141,15 +1190,23 @@ func buildWithAppImageTool(appDir string) {
 		err := os.Rename(buildOutput, currentPath)
 		if err != nil {
 			fmt.Printf("❌ 移动文件失败: %v\n", err)
-			return
+			
+			// 尝试复制
+			fmt.Println("🔄 尝试复制文件...")
+			if copyFile(buildOutput, currentPath) == nil {
+				os.Remove(buildOutput)
+				fmt.Println("✅ 文件复制成功")
+			} else {
+				fmt.Println("❌ 文件复制也失败")
+				return
+			}
 		}
 		
 		// 设置执行权限
 		os.Chmod(currentPath, 0755)
-		
 		fmt.Printf("✅ 构建完成: %s\n", filepath.Join(os.Getenv("PWD"), cfg.OutputFilename))
 		fmt.Println("🔍 挂载后路径: /tmp/.mount_XXXX/game/")
-
+		
 		if cfg.PackageType == "wine" {
 			wineArchiveDir := filepath.Join(cfg.WineArchiveBaseDir, cfg.AppName)
 			fmt.Printf("📁 固定Archive目录: %s\n", wineArchiveDir)
@@ -1167,12 +1224,6 @@ func buildWithAppImageTool(appDir string) {
 			if len(cfg.RootSaveFiles) > 0 {
 				fmt.Printf("🎯 根目录存档文件: %v\n", cfg.RootSaveFiles)
 			}
-		}
-
-		// 清理构建目录 (只在构建成功时)
-		if cfg.ForceBuild || askForConfirmation("清理构建目录? [Y/n]: ", true) {
-			os.RemoveAll("build")
-			fmt.Println("🧹 构建目录已清理")
 		}
 	} else {
 		fmt.Println("❌ 构建失败，输出文件未找到")
@@ -1208,7 +1259,8 @@ func buildWithAppImageTool(appDir string) {
 		// 提示手动构建
 		fmt.Println("\n💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
-		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", appimagetoolPath, appDirName, cfg.OutputFilename)
+		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", 
+			appimagetoolPath, appDirName, cfg.OutputFilename)
 	}
 }
 
@@ -1231,11 +1283,9 @@ func askForConfirmation(prompt string, defaultYes bool) bool {
 	var response string
 	fmt.Print(prompt)
 	fmt.Scanln(&response)
-
 	if response == "" {
 		return defaultYes
 	}
-
 	response = strings.ToLower(response)
 	return response == "y" || response == "yes" || response == "Y" || response == "YES"
 }
