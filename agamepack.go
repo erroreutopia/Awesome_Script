@@ -558,7 +558,7 @@ func completeConfig() {
 	// 补全输出文件名
 	if cfg.OutputFilename == "" {
 		cleanName := strings.Map(func(r rune) rune {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
 				return r
 			}
 			return -1
@@ -566,10 +566,17 @@ func completeConfig() {
 		if cleanName == "" {
 			cleanName = "Game"
 		}
-		cfg.OutputFilename = cleanName + ".AppImage"
+		// 确保有.AppImage后缀
+		if !strings.HasSuffix(cleanName, ".AppImage") {
+			cleanName += ".AppImage"
+		}
+		cfg.OutputFilename = cleanName
 		fmt.Printf("📝 使用目录名作为默认文件名: %s\n", cfg.OutputFilename)
-	} else if !strings.HasSuffix(cfg.OutputFilename, ".AppImage") {
-		cfg.OutputFilename += ".AppImage"
+	} else {
+		// 确保有.AppImage后缀
+		if !strings.HasSuffix(cfg.OutputFilename, ".AppImage") {
+			cfg.OutputFilename += ".AppImage"
+		}
 	}
 }
 
@@ -625,8 +632,11 @@ func buildAppImage() {
 
 			// 创建符号链接
 			os.Remove(wineSavePath)
-			os.Symlink(targetSavePath, wineSavePath)
-			fmt.Printf("🔗 %s -> %s\n", wineSavePath, targetSavePath)
+			if err := os.Symlink(targetSavePath, wineSavePath); err != nil {
+				fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+			} else {
+				fmt.Printf("🔗 %s -> %s\n", wineSavePath, targetSavePath)
+			}
 			fmt.Println("✅ 目录重定向完成")
 		}
 
@@ -642,9 +652,12 @@ func buildAppImage() {
 				if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
 					os.MkdirAll(filepath.Dir(targetFile), 0755)
 					os.Remove(sourceFile)
-					os.Symlink(targetFile, sourceFile)
-					fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
-					totalLinks++
+					if err := os.Symlink(targetFile, sourceFile); err != nil {
+						fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+					} else {
+						fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
+						totalLinks++
+					}
 				}
 			}
 			fmt.Printf("✅ 总共预创建 %d 个根目录存档链接\n", totalLinks)
@@ -664,9 +677,12 @@ func buildAppImage() {
 				if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
 					os.MkdirAll(filepath.Dir(targetFile), 0755)
 					os.Remove(sourceFile)
-					os.Symlink(targetFile, sourceFile)
-					fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
-					totalLinks++
+					if err := os.Symlink(targetFile, sourceFile); err != nil {
+						fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+					} else {
+						fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
+						totalLinks++
+					}
 				}
 			}
 			fmt.Printf("✅ 总共预创建 %d 个存档链接\n", totalLinks)
@@ -693,9 +709,12 @@ func buildAppImage() {
 				if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
 					os.MkdirAll(filepath.Dir(targetFile), 0755)
 					os.Remove(sourceFile)
-					os.Symlink(targetFile, sourceFile)
-					fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
-					totalLinks++
+					if err := os.Symlink(targetFile, sourceFile); err != nil {
+						fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+					} else {
+						fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
+						totalLinks++
+					}
 				}
 			}
 			fmt.Printf("✅ 总共预创建 %d 个根目录存档链接\n", totalLinks)
@@ -711,9 +730,13 @@ func buildAppImage() {
 	// 创建图标
 	createIconFile(appDir)
 
+	// 创建AppStream metadata
+	createAppStreamMetadata(appDir)
+
 	// 构建AppImage
 	if cfg.AutoBuild || cfg.ForceBuild || askForConfirmation("构建AppImage? [Y/n]: ", true) {
 		buildWithAppImageTool(appDir)
+		// 不在这里清理构建目录，只在构建成功后清理
 	}
 }
 
@@ -832,8 +855,9 @@ func copyDir(src string, dst string) error {
 func createLink(target string, link string) {
 	os.Remove(link)
 	os.MkdirAll(filepath.Dir(link), 0755)
-	os.Symlink(target, link)
-	fmt.Printf("🔗 %s -> %s\n", link, target)
+	if err := os.Symlink(target, link); err != nil {
+		fmt.Printf("⚠️  创建符号链接失败: %v\n", err)
+	}
 }
 
 func createAppRun(appDir string) {
@@ -891,7 +915,8 @@ Type=Application
 Categories=Game;
 X-AppImage-Version=1.0
 X-AppImage-Type=%s
-`, cfg.AppName, cfg.AppName, cfg.PackageType)
+X-AppImage-Identifier=%s
+`, cfg.AppName, cfg.AppName, cfg.PackageType, cfg.AppName)
 	err := os.WriteFile(desktopPath, []byte(content), 0644)
 	if err != nil {
 		fmt.Printf("❌ 创建.desktop文件失败: %v\n", err)
@@ -978,6 +1003,46 @@ func createIconFile(appDir string) {
 	}
 }
 
+func createAppStreamMetadata(appDir string) {
+	metainfoDir := filepath.Join(appDir, "usr", "share", "metainfo")
+	os.MkdirAll(metainfoDir, 0755)
+	
+	metainfoPath := filepath.Join(metainfoDir, cfg.AppName+".appdata.xml")
+	
+	// 从AppName中提取ID (移除非字母数字字符)
+	appID := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, cfg.AppName)
+	
+	// 生成一个简单的AppStream metadata
+	content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright %d %s -->
+<component type="desktop-application">
+  <id>%s.desktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Proprietary</project_license>
+  <name>%s</name>
+  <summary>%s game packaged as AppImage</summary>
+  <description>
+    <p>%s is a game packaged as an AppImage for easy distribution and execution.</p>
+  </description>
+  <launchable type="desktop-id">%s.desktop</launchable>
+  <url type="homepage">https://appimage.org/</url>
+  <project_group>AppImage</project_group>
+</component>
+`, time.Now().Year(), cfg.AppName, appID, cfg.AppName, cfg.AppName, cfg.AppName, appID)
+
+	err := os.WriteFile(metainfoPath, []byte(content), 0644)
+	if err == nil {
+		fmt.Printf("✅ 创建AppStream metadata: %s\n", metainfoPath)
+	} else {
+		fmt.Printf("⚠️  创建AppStream metadata失败: %v\n", err)
+	}
+}
+
 func buildWithAppImageTool(appDir string) {
 	// 检查appimagetool是否存在
 	appimagetoolPath := "appimagetool"
@@ -1006,6 +1071,9 @@ func buildWithAppImageTool(appDir string) {
 	fmt.Printf("🚀 构建AppImage: %s\n", cfg.OutputFilename)
 	fmt.Printf("   📁 源目录: %s\n", appDir)
 	fmt.Printf("   🎯 输出: %s\n", buildOutput)
+
+	// 确保输出目录存在
+	os.MkdirAll(filepath.Dir(buildOutput), 0755)
 
 	// 设置环境变量
 	env := os.Environ()
@@ -1052,6 +1120,13 @@ func buildWithAppImageTool(appDir string) {
 			fmt.Printf("❌ 检查源目录失败: %v\n", err)
 		}
 		
+		// 检查输出文件是否存在
+		if fileExists(buildOutput) {
+			fmt.Printf("✅ 输出文件存在: %s\n", buildOutput)
+		} else {
+			fmt.Printf("❌ 输出文件不存在: %s\n", buildOutput)
+		}
+		
 		// 提示手动构建
 		fmt.Println("\n💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
@@ -1094,7 +1169,7 @@ func buildWithAppImageTool(appDir string) {
 			}
 		}
 
-		// 清理构建目录
+		// 清理构建目录 (只在构建成功时)
 		if cfg.ForceBuild || askForConfirmation("清理构建目录? [Y/n]: ", true) {
 			os.RemoveAll("build")
 			fmt.Println("🧹 构建目录已清理")
@@ -1121,6 +1196,13 @@ func buildWithAppImageTool(appDir string) {
 			fmt.Printf("   📁 大小: %d bytes\n", info.Size())
 		} else {
 			fmt.Printf("❌ 检查源目录失败: %v\n", err)
+		}
+		
+		// 检查输出文件
+		if fileExists(buildOutput) {
+			fmt.Printf("✅ 输出文件存在: %s\n", buildOutput)
+		} else {
+			fmt.Printf("❌ 输出文件不存在: %s\n", buildOutput)
 		}
 		
 		// 提示手动构建

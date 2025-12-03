@@ -8,7 +8,9 @@
 
 * agamepack：打包PRGMaker,Wine为Appimage
 
-（注：RPG存档位置为：$HOME/Game/HTMLGame/NWJS/$(GAMENAME)/，WINE存档位置为$HOME/Game/WineGame/Save/$(GAMENAME)），wine如果需要在游戏目录而非`.wine`目录会无法保存！
+（注：RPG存档位置为：$HOME/Game/HTMLGame/NWJS/$(GAMENAME)/，WINE存档位置为$HOME/Game/WineGame/Save/$(GAMENAME)）
+
+wine如果游戏存档目录在游戏目录内而非`.wine`目录会无法保存！需要使用`--wine-save`指定存档目录或者`--root-save`指定游戏根目录下的存档文件
 
 使用方法：agamepack -r 目录，没有默认为game目录。-i icon文件。 -n 游戏名称。-o 输出的文件名，只能是ACSII字符。
 
