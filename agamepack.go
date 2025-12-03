@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -872,7 +873,11 @@ exec "${NWJS_PATH}" . --no-sandbox
 `, cfg.AppName, cfg.SaveBaseDir, cfg.NWJSPath)
 	}
 
-	os.WriteFile(appRunPath, []byte(content), 0755)
+	err := os.WriteFile(appRunPath, []byte(content), 0755)
+	if err != nil {
+		fmt.Printf("❌ 创建AppRun失败: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func createDesktopFile(appDir string) {
@@ -887,7 +892,11 @@ Categories=Game;
 X-AppImage-Version=1.0
 X-AppImage-Type=%s
 `, cfg.AppName, cfg.AppName, cfg.PackageType)
-	os.WriteFile(desktopPath, []byte(content), 0644)
+	err := os.WriteFile(desktopPath, []byte(content), 0644)
+	if err != nil {
+		fmt.Printf("❌ 创建.desktop文件失败: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func createIconFile(appDir string) {
@@ -926,17 +935,17 @@ func createIconFile(appDir string) {
 
 	// 生成图标
 	if convertCmd != "" {
-		var cmd []string
+		var cmdArgs []string
 		if strings.HasSuffix(convertCmd, "magick") {
-			cmd = []string{
-				"magick", "convert", "-size", "256x256", "xc:"+color,
+			cmdArgs = []string{
+				"convert", "-size", "256x256", "xc:"+color,
 				"-fill", "white", "-font", "DejaVu-Sans-Bold", "-pointsize", "48",
 				"-gravity", "center", "-draw", fmt.Sprintf("text 0,0 '%s'", symbol),
 				iconPath,
 			}
 		} else {
-			cmd = []string{
-				"convert", "-size", "256x256", "xc:"+color,
+			cmdArgs = []string{
+				"-size", "256x256", "xc:"+color,
 				"-fill", "white", "-font", "DejaVu-Sans-Bold", "-pointsize", "48",
 				"-gravity", "center", "-draw", fmt.Sprintf("text 0,0 '%s'", symbol),
 				iconPath,
@@ -944,58 +953,99 @@ func createIconFile(appDir string) {
 		}
 		
 		// 执行命令
-		process, err := os.StartProcess(convertCmd, cmd, &os.ProcAttr{
-			Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
-		})
-		if err == nil {
-			process.Wait()
-			if fileExists(iconPath) {
-				return
-			}
+		var cmd *exec.Cmd
+		if strings.HasSuffix(convertCmd, "magick") {
+			cmd = exec.Command("magick", cmdArgs...)
+		} else {
+			cmd = exec.Command("convert", cmdArgs...)
+		}
+		
+		err := cmd.Run()
+		if err == nil && fileExists(iconPath) {
+			return
 		}
 	}
 
 	// 创建简单的占位符文件
-	os.WriteFile(iconPath, []byte("dummy icon"), 0644)
-	fmt.Println("⚠️  无法生成图标，使用占位符")
+	err := os.WriteFile(iconPath, []byte("dummy icon"), 0644)
+	if err == nil {
+		fmt.Println("⚠️  无法生成图标，使用占位符")
+	} else {
+		fmt.Printf("❌ 创建图标文件失败: %v\n", err)
+	}
 }
 
 func buildWithAppImageTool(appDir string) {
 	// 检查appimagetool是否存在
-	if _, err := os.Stat("/usr/bin/appimagetool"); os.IsNotExist(err) {
+	appimagetoolPath := "/usr/bin/appimagetool"
+	if _, err := os.Stat(appimagetoolPath); os.IsNotExist(err) {
+		// 尝试其他路径
+		for _, path := range []string{"/usr/local/bin/appimagetool", "appimagetool"} {
+			if _, err := exec.LookPath(path); err == nil {
+				appimagetoolPath = path
+				break
+			}
+		}
+	}
+	
+	if _, err := exec.LookPath(appimagetoolPath); err != nil {
 		fmt.Println("❌ appimagetool未安装，无法构建")
 		fmt.Println("💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
-		fmt.Printf("   ARCH=x86_64 appimagetool %s.AppDir %s\n", cfg.AppName, cfg.OutputFilename)
+		fmt.Printf("   ARCH=x86_64 %s %s %s\n", appimagetoolPath, cfg.AppName+".AppDir", cfg.OutputFilename)
 		return
 	}
 
+	buildOutput := filepath.Join("build", cfg.OutputFilename)
+	
 	fmt.Printf("🚀 构建AppImage: %s\n", cfg.OutputFilename)
+	fmt.Printf("   📁 源目录: %s\n", appDir)
+	fmt.Printf("   🎯 输出: %s\n", buildOutput)
+
+	// 设置环境变量
+	env := os.Environ()
+	env = append(env, "ARCH=x86_64")
+
+	// 执行appimagetool
+	cmd := exec.Command(appimagetoolPath, appDir, buildOutput)
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// 在build目录中执行
+	cmd.Dir = "build"
 	
-	// 创建构建脚本
-	buildScript := filepath.Join("build", "build.sh")
-	scriptContent := fmt.Sprintf(`#!/bin/bash
-export ARCH=x86_64
-appimagetool "%s" "%s"
-`, appDir, filepath.Join("build", cfg.OutputFilename))
-	os.WriteFile(buildScript, []byte(scriptContent), 0755)
-	
-	// 执行构建脚本
-	cmd := []string{"/bin/bash", buildScript}
-	process, err := os.StartProcess("/bin/bash", cmd, &os.ProcAttr{
-		Dir:   "build",
-		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
-	})
+	err := cmd.Run()
 	if err != nil {
 		fmt.Printf("❌ 构建失败: %v\n", err)
+		
+		// 检查构建目录
+		fmt.Println("🔍 检查构建目录内容:")
+		files, _ := os.ReadDir("build")
+		for _, file := range files {
+			fmt.Printf("   - %s\n", file.Name())
+		}
+		
+		// 提示手动构建
+		fmt.Println("\n💡 手动构建命令:")
+		fmt.Printf("   cd build\n")
+		fmt.Printf("   ARCH=x86_64 %s %s %s\n", appimagetoolPath, cfg.AppName+".AppDir", cfg.OutputFilename)
 		return
 	}
-	process.Wait()
 
-	// 移动到当前位置
-	if fileExists(filepath.Join("build", cfg.OutputFilename)) {
-		os.Rename(filepath.Join("build", cfg.OutputFilename), cfg.OutputFilename)
-		os.Chmod(cfg.OutputFilename, 0755)
+	// 检查构建结果
+	if fileExists(buildOutput) {
+		// 移动到当前位置
+		currentPath := filepath.Join(".", cfg.OutputFilename)
+		err := os.Rename(buildOutput, currentPath)
+		if err != nil {
+			fmt.Printf("❌ 移动文件失败: %v\n", err)
+			return
+		}
+		
+		// 设置执行权限
+		os.Chmod(currentPath, 0755)
+		
 		fmt.Printf("✅ 构建完成: %s\n", filepath.Join(os.Getenv("PWD"), cfg.OutputFilename))
 		fmt.Println("🔍 挂载后路径: /tmp/.mount_XXXX/game/")
 
@@ -1024,7 +1074,19 @@ appimagetool "%s" "%s"
 			fmt.Println("🧹 构建目录已清理")
 		}
 	} else {
-		fmt.Println("❌ 构建失败，文件未找到")
+		fmt.Println("❌ 构建失败，输出文件未找到")
+		
+		// 检查构建目录
+		fmt.Println("🔍 检查构建目录内容:")
+		files, _ := os.ReadDir("build")
+		for _, file := range files {
+			fmt.Printf("   - %s\n", file.Name())
+		}
+		
+		// 提示手动构建
+		fmt.Println("\n💡 手动构建命令:")
+		fmt.Printf("   cd build\n")
+		fmt.Printf("   ARCH=x86_64 %s %s %s\n", appimagetoolPath, cfg.AppName+".AppDir", cfg.OutputFilename)
 	}
 }
 
