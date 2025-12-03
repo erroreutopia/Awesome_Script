@@ -925,10 +925,11 @@ func createIconFile(appDir string) {
 	color := "#" + colorHex
 
 	// 检查ImageMagick命令
-	convertCmd := "/usr/bin/convert"
-	if _, err := os.Stat(convertCmd); os.IsNotExist(err) {
-		convertCmd = "/usr/bin/magick"
-		if _, err := os.Stat(convertCmd); os.IsNotExist(err) {
+	convertCmd := "convert"
+	if _, err := exec.LookPath(convertCmd); err != nil {
+		// 尝试 magick
+		convertCmd = "magick"
+		if _, err := exec.LookPath(convertCmd); err != nil {
 			convertCmd = ""
 		}
 	}
@@ -936,7 +937,8 @@ func createIconFile(appDir string) {
 	// 生成图标
 	if convertCmd != "" {
 		var cmdArgs []string
-		if strings.HasSuffix(convertCmd, "magick") {
+		if convertCmd == "magick" {
+			// IMv7 语法: magick convert [options]
 			cmdArgs = []string{
 				"convert", "-size", "256x256", "xc:"+color,
 				"-fill", "white", "-font", "DejaVu-Sans-Bold", "-pointsize", "48",
@@ -944,6 +946,7 @@ func createIconFile(appDir string) {
 				iconPath,
 			}
 		} else {
+			// IMv6 语法: convert [options]
 			cmdArgs = []string{
 				"-size", "256x256", "xc:"+color,
 				"-fill", "white", "-font", "DejaVu-Sans-Bold", "-pointsize", "48",
@@ -954,7 +957,7 @@ func createIconFile(appDir string) {
 		
 		// 执行命令
 		var cmd *exec.Cmd
-		if strings.HasSuffix(convertCmd, "magick") {
+		if convertCmd == "magick" {
 			cmd = exec.Command("magick", cmdArgs...)
 		} else {
 			cmd = exec.Command("convert", cmdArgs...)
@@ -977,11 +980,11 @@ func createIconFile(appDir string) {
 
 func buildWithAppImageTool(appDir string) {
 	// 检查appimagetool是否存在
-	appimagetoolPath := "/usr/bin/appimagetool"
-	if _, err := os.Stat(appimagetoolPath); os.IsNotExist(err) {
+	appimagetoolPath := "appimagetool"
+	if _, err := exec.LookPath(appimagetoolPath); err != nil {
 		// 尝试其他路径
-		for _, path := range []string{"/usr/local/bin/appimagetool", "appimagetool"} {
-			if _, err := exec.LookPath(path); err == nil {
+		for _, path := range []string{"/usr/bin/appimagetool", "/usr/local/bin/appimagetool"} {
+			if _, err := os.Stat(path); err == nil {
 				appimagetoolPath = path
 				break
 			}
@@ -989,10 +992,12 @@ func buildWithAppImageTool(appDir string) {
 	}
 	
 	if _, err := exec.LookPath(appimagetoolPath); err != nil {
-		fmt.Println("❌ appimagetool未安装，无法构建")
+		fmt.Printf("❌ appimagetool未安装: %v\n", err)
+		fmt.Println("💡 安装命令 (Debian/Ubuntu): sudo apt-get install appimagetool")
+		fmt.Println("💡 安装命令 (Arch Linux): sudo pacman -S appimagetool")
 		fmt.Println("💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
-		fmt.Printf("   ARCH=x86_64 %s %s %s\n", appimagetoolPath, cfg.AppName+".AppDir", cfg.OutputFilename)
+		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", appimagetoolPath, filepath.Base(appDir), cfg.OutputFilename)
 		return
 	}
 
@@ -1006,14 +1011,21 @@ func buildWithAppImageTool(appDir string) {
 	env := os.Environ()
 	env = append(env, "ARCH=x86_64")
 
-	// 执行appimagetool
-	cmd := exec.Command(appimagetoolPath, appDir, buildOutput)
+	// 关键修正：使用相对路径
+	appDirName := filepath.Base(appDir) // 只取目录名，不包含build/
+	
+	// 确保构建目录存在
+	os.MkdirAll("build", 0755)
+	
+	// 在build目录中执行appimagetool
+	cmd := exec.Command(appimagetoolPath, appDirName, cfg.OutputFilename)
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-
-	// 在build目录中执行
-	cmd.Dir = "build"
+	cmd.Dir = "build"  // 在build目录中执行
+	
+	fmt.Printf("🔧 工作目录: %s\n", cmd.Dir)
+	fmt.Printf("🔧 命令: %s %s %s\n", appimagetoolPath, appDirName, cfg.OutputFilename)
 	
 	err := cmd.Run()
 	if err != nil {
@@ -1021,15 +1033,29 @@ func buildWithAppImageTool(appDir string) {
 		
 		// 检查构建目录
 		fmt.Println("🔍 检查构建目录内容:")
-		files, _ := os.ReadDir("build")
-		for _, file := range files {
-			fmt.Printf("   - %s\n", file.Name())
+		files, err := os.ReadDir("build")
+		if err == nil {
+			for _, file := range files {
+				fmt.Printf("   - %s\n", file.Name())
+			}
+		} else {
+			fmt.Printf("   ❌ 无法读取build目录: %v\n", err)
+		}
+		
+		// 检查源目录是否存在
+		if info, err := os.Stat(appDir); os.IsNotExist(err) {
+			fmt.Printf("❌ 源目录不存在: %s\n", appDir)
+		} else if err == nil {
+			fmt.Printf("✅ 源目录存在: %s\n", appDir)
+			fmt.Printf("   📁 大小: %d bytes\n", info.Size())
+		} else {
+			fmt.Printf("❌ 检查源目录失败: %v\n", err)
 		}
 		
 		// 提示手动构建
 		fmt.Println("\n💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
-		fmt.Printf("   ARCH=x86_64 %s %s %s\n", appimagetoolPath, cfg.AppName+".AppDir", cfg.OutputFilename)
+		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", appimagetoolPath, appDirName, cfg.OutputFilename)
 		return
 	}
 
@@ -1078,15 +1104,29 @@ func buildWithAppImageTool(appDir string) {
 		
 		// 检查构建目录
 		fmt.Println("🔍 检查构建目录内容:")
-		files, _ := os.ReadDir("build")
-		for _, file := range files {
-			fmt.Printf("   - %s\n", file.Name())
+		files, err := os.ReadDir("build")
+		if err == nil {
+			for _, file := range files {
+				fmt.Printf("   - %s\n", file.Name())
+			}
+		} else {
+			fmt.Printf("   ❌ 无法读取build目录: %v\n", err)
+		}
+		
+		// 检查源目录
+		if info, err := os.Stat(appDir); os.IsNotExist(err) {
+			fmt.Printf("❌ 源目录不存在: %s\n", appDir)
+		} else if err == nil {
+			fmt.Printf("✅ 源目录存在: %s\n", appDir)
+			fmt.Printf("   📁 大小: %d bytes\n", info.Size())
+		} else {
+			fmt.Printf("❌ 检查源目录失败: %v\n", err)
 		}
 		
 		// 提示手动构建
 		fmt.Println("\n💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
-		fmt.Printf("   ARCH=x86_64 %s %s %s\n", appimagetoolPath, cfg.AppName+".AppDir", cfg.OutputFilename)
+		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", appimagetoolPath, appDirName, cfg.OutputFilename)
 	}
 }
 
