@@ -9,4 +9,5 @@
 * agamepack：打包PRGMaker,Wine为Appimage（注：RPG存档位置为：$HOME/Game/HTMLGame/NWJS/$(GAMENAME)/，WINE存档位置为$HOME/Game/WineGame/Save/$(GAMENAME)），wine如果需要在游戏目录而非.wine目录会无法保存！以及，Nwjs和proton-ge前者需要在$HOME/App/nwjs-sdk/,后者需要在`PATH`
 使用方法：agamepack -r 目录，没有默认为game目录。-i icon文件。 -n 游戏名称。-o 输出的文件名，只能是ACSII字符 --wine-exec 设置wine的可执行文件名，但是脚本会自动识别，可无视。--wine-cmd 设置wine/proton等兼容层路径，默认为proton-ge, 
 更多查看 `-h`选项
+如果没有任何选项则进入`问卷模式`
 * 依赖: 忘了...喂给AI问问?

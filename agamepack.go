@@ -223,7 +223,25 @@ func runInteractiveMode() {
 	}
 	cfg.AppName = name
 
-	// 3. 游戏类型
+	// 3. 图标文件
+	fmt.Print("自定义图标文件 (留空使用默认生成): ")
+	var iconPath string
+	fmt.Scanln(&iconPath)
+	cfg.IconPath = iconPath
+	if cfg.IconPath != "" {
+		absIconPath, err := filepath.Abs(cfg.IconPath)
+		if err == nil {
+			cfg.IconPath = absIconPath
+		}
+		if _, err := os.Stat(cfg.IconPath); os.IsNotExist(err) {
+			fmt.Printf("⚠️  图标文件不存在: %s，将使用默认生成\n", cfg.IconPath)
+			cfg.IconPath = ""
+		} else {
+			fmt.Printf("✅ 使用自定义图标: %s\n", cfg.IconPath)
+		}
+	}
+
+	// 4. 游戏类型
 	fmt.Println("")
 	fmt.Println("游戏类型:")
 	fmt.Println("1. NW.js/HTML5 游戏 (package.json 或 index.html)")
@@ -766,26 +784,49 @@ func createIconFile(appDir string) {
 	colorHex := fmt.Sprintf("%06x", (nanoPart + unixPart) % 0xFFFFFF)
 	color := "#" + colorHex
 
-	// 尝试调用convert命令
-	if _, err := os.Stat("/usr/bin/convert"); err == nil {
-		cmd := []string{
-			"convert", "-size", "256x256", "xc:"+color,
-			"-fill", "white", "-font", "DejaVu-Sans-Bold", "-pointsize", "48",
-			"-gravity", "center", "-draw", fmt.Sprintf("text 0,0 '%s'", symbol),
-			iconPath,
+	// 检查ImageMagick命令
+	convertCmd := "/usr/bin/convert"
+	if _, err := os.Stat(convertCmd); os.IsNotExist(err) {
+		convertCmd = "/usr/bin/magick"
+		if _, err := os.Stat(convertCmd); os.IsNotExist(err) {
+			convertCmd = ""
+		}
+	}
+
+	// 生成图标
+	if convertCmd != "" {
+		var cmd []string
+		if strings.HasSuffix(convertCmd, "magick") {
+			cmd = []string{
+				"magick", "convert", "-size", "256x256", "xc:"+color,
+				"-fill", "white", "-font", "DejaVu-Sans-Bold", "-pointsize", "48",
+				"-gravity", "center", "-draw", fmt.Sprintf("text 0,0 '%s'", symbol),
+				iconPath,
+			}
+		} else {
+			cmd = []string{
+				"convert", "-size", "256x256", "xc:"+color,
+				"-fill", "white", "-font", "DejaVu-Sans-Bold", "-pointsize", "48",
+				"-gravity", "center", "-draw", fmt.Sprintf("text 0,0 '%s'", symbol),
+				iconPath,
+			}
 		}
 		
-		// 简单执行命令
-		process, err := os.StartProcess("/usr/bin/convert", cmd, &os.ProcAttr{
+		// 执行命令
+		process, err := os.StartProcess(convertCmd, cmd, &os.ProcAttr{
 			Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
 		})
 		if err == nil {
 			process.Wait()
+			if fileExists(iconPath) {
+				return
+			}
 		}
-	} else {
-		// 创建简单的占位符文件
-		os.WriteFile(iconPath, []byte("dummy icon"), 0644)
 	}
+
+	// 创建简单的占位符文件
+	os.WriteFile(iconPath, []byte("dummy icon"), 0644)
+	fmt.Println("⚠️  无法生成图标，使用占位符")
 }
 
 func buildWithAppImageTool(appDir string) {
