@@ -14,21 +14,22 @@ import (
 
 // 配置结构体
 type Config struct {
-	GameSourceDir    string
-	AppName          string
-	IconPath         string
-	PackageType      string
-	WineExec         string
-	WineCmd          string
-	WineSaveDir      string
-	SavePattern      string
-	SaveStart        int
-	SaveEnd          int
-	AutoBuild        bool
-	ForceBuild       bool
-	OutputFilename   string
-	NWJSPath         string
-	SaveBaseDir      string
+	GameSourceDir     string
+	AppName           string
+	IconPath          string
+	PackageType       string
+	WineExec          string
+	WineCmd           string
+	WineSaveDir       string
+	RootSaveFiles     []string // 根目录存档文件
+	SavePattern       string
+	SaveStart         int
+	SaveEnd           int
+	AutoBuild         bool
+	ForceBuild        bool
+	OutputFilename    string
+	NWJSPath          string
+	SaveBaseDir       string
 	WineArchiveBaseDir string
 }
 
@@ -37,12 +38,12 @@ var cfg Config
 func main() {
 	// 初始化默认配置
 	cfg = Config{
-		WineCmd:          "proton-ge",
-		SavePattern:      "Save%d",
-		SaveStart:        1,
-		SaveEnd:          10,
-		NWJSPath:         filepath.Join(os.Getenv("HOME"), "App/nwjs-sdk/nw"),
-		SaveBaseDir:      filepath.Join(os.Getenv("HOME"), "Game/HTMLGame/NWJS/SAVE"),
+		WineCmd:           "proton-ge",
+		SavePattern:       "Save%d",
+		SaveStart:         1,
+		SaveEnd:           10,
+		NWJSPath:          filepath.Join(os.Getenv("HOME"), "App/nwjs-sdk/nw"),
+		SaveBaseDir:       filepath.Join(os.Getenv("HOME"), "Game/HTMLGame/NWJS/SAVE"),
 		WineArchiveBaseDir: filepath.Join(os.Getenv("HOME"), "Game/WineGame/Save"),
 	}
 
@@ -58,6 +59,8 @@ func main() {
 	wineExec := flag.String("wine-exec", "", "Wine可执行文件")
 	wineCmd := flag.String("wine-cmd", "proton-ge", "Wine命令")
 	wineSaveDir := flag.String("wine-save", "", "Wine存档目录")
+	rootSave := flag.String("root-save", "", "根目录存档文件 (逗号分隔)")
+	rootSaveLong := flag.String("root-save-files", "", "根目录存档文件 (逗号分隔)")
 	output := flag.String("o", "", "输出文件名")
 	outputLong := flag.String("output", "", "输出文件名")
 	savePattern := flag.String("save-pattern", "Save%d", "自定义存档模式")
@@ -103,6 +106,19 @@ func main() {
 	cfg.WineExec = *wineExec
 	cfg.WineCmd = *wineCmd
 	cfg.WineSaveDir = *wineSaveDir
+	
+	// 处理根目录存档文件
+	rootSaveFiles := *rootSave
+	if rootSaveFiles == "" {
+		rootSaveFiles = *rootSaveLong
+	}
+	if rootSaveFiles != "" {
+		cfg.RootSaveFiles = strings.Split(rootSaveFiles, ",")
+		for i := range cfg.RootSaveFiles {
+			cfg.RootSaveFiles[i] = strings.TrimSpace(cfg.RootSaveFiles[i])
+		}
+	}
+
 	cfg.OutputFilename = *output
 	if cfg.OutputFilename == "" {
 		cfg.OutputFilename = *outputLong
@@ -158,14 +174,15 @@ func showHelp() {
 	fmt.Println("  --wine-exec FILE       Wine可执行文件")
 	fmt.Println("  --wine-cmd CMD         Wine命令 (默认: proton-ge)")
 	fmt.Println("  --wine-save DIR        Wine存档目录")
+	fmt.Println("  --root-save FILES      根目录存档文件 (逗号分隔，例如: save.dat,config.ini)")
 	fmt.Println("")
 	fmt.Println("示例:")
 	fmt.Println("  # 问卷式模式 (无参数)")
 	fmt.Println("  agamepack")
 	fmt.Println("")
-	fmt.Println("  # 指定参数")
-	fmt.Println("  agamepack -r \"觅长生\" -n \"觅长生\" -i \"觅长生/icon.png\" \\")
-	fmt.Println("    --wine-exec \"觅长生.exe\" --wine-save MCSSave --build -y")
+	fmt.Println("  # 指定参数 (根目录存档)")
+	fmt.Println("  agamepack -r \"old_game\" -n \"OldGame\" --wine-exec \"game.exe\" \\")
+	fmt.Println("    --root-save \"save.dat,config.ini\" --build -y")
 }
 
 func shouldUseInteractiveMode() bool {
@@ -260,6 +277,7 @@ func runInteractiveMode() {
 		case "1":
 			cfg.PackageType = "nwjs"
 			fmt.Println("✅ 选择: NW.js/HTML5 游戏")
+			setupRootSaveFilesInteractive()
 			return
 		case "2", "3":
 			cfg.PackageType = "wine"
@@ -269,6 +287,52 @@ func runInteractiveMode() {
 		default:
 			fmt.Println("❌ 无效选择，请输入 1-3")
 		}
+	}
+}
+
+func setupRootSaveFilesInteractive() {
+	fmt.Println("")
+	fmt.Println("🔍 检测根目录存档文件...")
+	rootFiles := findRootSaveFiles(cfg.GameSourceDir)
+	if len(rootFiles) > 0 {
+		fmt.Println("检测到可能的根目录存档文件:")
+		for i, file := range rootFiles {
+			fmt.Printf("  %d. %s\n", i+1, file)
+		}
+		
+		var choices string
+		fmt.Print("选择要重定向的文件 (例如: 1,2,3 或 0 跳过): ")
+		fmt.Scanln(&choices)
+		
+		if choices != "0" && choices != "" {
+			selected := strings.Split(choices, ",")
+			for _, choice := range selected {
+				choice = strings.TrimSpace(choice)
+				index, err := strconv.Atoi(choice)
+				if err == nil && index > 0 && index <= len(rootFiles) {
+					cfg.RootSaveFiles = append(cfg.RootSaveFiles, rootFiles[index-1])
+				}
+			}
+		}
+	}
+	
+	if len(cfg.RootSaveFiles) == 0 {
+		var manualFiles string
+		fmt.Print("手动指定根目录存档文件 (逗号分隔，例如: save.dat,config.ini，留空跳过): ")
+		fmt.Scanln(&manualFiles)
+		if manualFiles != "" {
+			files := strings.Split(manualFiles, ",")
+			for _, file := range files {
+				file = strings.TrimSpace(file)
+				if file != "" {
+					cfg.RootSaveFiles = append(cfg.RootSaveFiles, file)
+				}
+			}
+		}
+	}
+	
+	if len(cfg.RootSaveFiles) > 0 {
+		fmt.Printf("✅ 选择根目录存档文件: %v\n", cfg.RootSaveFiles)
 	}
 }
 
@@ -324,26 +388,30 @@ func setupWineInteractive() {
 	fmt.Println("")
 	fmt.Println("存档设置:")
 	fmt.Println("1. 目录重定向 (推荐: save/, MCSSave/ 等)")
-	fmt.Println("2. 自定义文件模式 (Save01, Save02...)")
+	fmt.Println("2. 根目录存档文件 (例如: save.dat, config.ini)")
+	fmt.Println("3. 自定义文件模式 (Save01, Save02...)")
+	fmt.Println("4. 混合模式 (目录 + 根目录文件)")
 
-	for {
-		var choice string
-		fmt.Print("选择存档方式 [1]: ")
-		fmt.Scanln(&choice)
-		if choice == "" {
-			choice = "1"
-		}
+	var choice string
+	fmt.Print("选择存档方式 (推荐 2 或 4): ")
+	fmt.Scanln(&choice)
+	if choice == "" {
+		choice = "2"
+	}
 
-		switch choice {
-		case "1":
-			setupWineSaveDirInteractive()
-			return
-		case "2":
-			setupCustomSavePatternInteractive()
-			return
-		default:
-			fmt.Println("❌ 无效选择，请输入 1-2")
-		}
+	switch choice {
+	case "1":
+		setupWineSaveDirInteractive()
+	case "2":
+		setupRootSaveFilesInteractive()
+	case "3":
+		setupCustomSavePatternInteractive()
+	case "4":
+		setupWineSaveDirInteractive()
+		setupRootSaveFilesInteractive()
+	default:
+		fmt.Println("❌ 无效选择，使用默认: 根目录存档文件")
+		setupRootSaveFilesInteractive()
 	}
 }
 
@@ -547,8 +615,8 @@ func buildAppImage() {
 		os.MkdirAll(wineArchiveDir, 0755)
 		fmt.Printf("📁 固定Archive目录: %s\n", wineArchiveDir)
 
+		// 1. 目录重定向模式
 		if cfg.WineSaveDir != "" {
-			// 目录重定向模式
 			fmt.Printf("🔗 目录重定向模式: %s/\n", cfg.WineSaveDir)
 			wineSavePath := filepath.Join(gameSubDir, cfg.WineSaveDir)
 			targetSavePath := filepath.Join(wineArchiveDir, cfg.WineSaveDir)
@@ -559,8 +627,30 @@ func buildAppImage() {
 			os.Symlink(targetSavePath, wineSavePath)
 			fmt.Printf("🔗 %s -> %s\n", wineSavePath, targetSavePath)
 			fmt.Println("✅ 目录重定向完成")
-		} else {
-			// 自定义文件模式
+		}
+
+		// 2. 根目录存档文件
+		if len(cfg.RootSaveFiles) > 0 {
+			fmt.Printf("🔗 根目录存档文件: %v\n", cfg.RootSaveFiles)
+			totalLinks := 0
+			for _, filename := range cfg.RootSaveFiles {
+				sourceFile := filepath.Join(gameSubDir, filename)
+				targetFile := filepath.Join(wineArchiveDir, filename)
+				
+				// 只创建不存在的链接
+				if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
+					os.MkdirAll(filepath.Dir(targetFile), 0755)
+					os.Remove(sourceFile)
+					os.Symlink(targetFile, sourceFile)
+					fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
+					totalLinks++
+				}
+			}
+			fmt.Printf("✅ 总共预创建 %d 个根目录存档链接\n", totalLinks)
+		}
+
+		// 3. 自定义文件模式 (如果没有其他存档设置)
+		if cfg.WineSaveDir == "" && len(cfg.RootSaveFiles) == 0 {
 			fmt.Printf("🔗 创建自定义存档链接: %s (%d to %d)\n",
 				cfg.SavePattern, cfg.SaveStart, cfg.SaveEnd)
 
@@ -590,6 +680,25 @@ func buildAppImage() {
 		createLink(gameSaveDir, filepath.Join(gameSubDir, "save"))
 		os.MkdirAll(filepath.Join(gameSubDir, "www"), 0755)
 		createLink(gameSaveDir, filepath.Join(gameSubDir, "www", "save"))
+		
+		// 根目录存档文件
+		if len(cfg.RootSaveFiles) > 0 {
+			fmt.Printf("🔗 NW.js根目录存档文件: %v\n", cfg.RootSaveFiles)
+			totalLinks := 0
+			for _, filename := range cfg.RootSaveFiles {
+				sourceFile := filepath.Join(appDir, filename)
+				targetFile := filepath.Join(gameSaveDir, filename)
+				
+				if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
+					os.MkdirAll(filepath.Dir(targetFile), 0755)
+					os.Remove(sourceFile)
+					os.Symlink(targetFile, sourceFile)
+					fmt.Printf("🔗 %s -> %s\n", sourceFile, targetFile)
+					totalLinks++
+				}
+			}
+			fmt.Printf("✅ 总共预创建 %d 个根目录存档链接\n", totalLinks)
+		}
 	}
 
 	// 创建AppRun
@@ -662,6 +771,28 @@ func findSaveDirectories(dir string) []string {
 		return nil
 	})
 	return saveDirs
+}
+
+func findRootSaveFiles(dir string) []string {
+	var saveFiles []string
+	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			filename := strings.ToLower(d.Name())
+			// 常见的存档文件扩展名
+			for _, ext := range []string{".sav", ".save", ".dat", ".ini", ".cfg", ".conf", ".json"} {
+				if strings.HasSuffix(filename, ext) {
+					relPath, _ := filepath.Rel(dir, path)
+					saveFiles = append(saveFiles, relPath)
+					break
+				}
+			}
+		}
+		return nil
+	})
+	return saveFiles
 }
 
 func copyDir(src string, dst string) error {
@@ -873,11 +1004,18 @@ appimagetool "%s" "%s"
 			fmt.Printf("📁 固定Archive目录: %s\n", wineArchiveDir)
 			if cfg.WineSaveDir != "" {
 				fmt.Printf("🎯 目录重定向模式: %s/\n", cfg.WineSaveDir)
-			} else {
+			}
+			if len(cfg.RootSaveFiles) > 0 {
+				fmt.Printf("🎯 根目录存档文件: %v\n", cfg.RootSaveFiles)
+			}
+			if cfg.WineSaveDir == "" && len(cfg.RootSaveFiles) == 0 {
 				fmt.Printf("🎯 自定义存档模式: %s (%d-%d)\n", cfg.SavePattern, cfg.SaveStart, cfg.SaveEnd)
 			}
 		} else {
 			fmt.Printf("💾 统一存档位置: %s\n", filepath.Join(cfg.SaveBaseDir, cfg.AppName))
+			if len(cfg.RootSaveFiles) > 0 {
+				fmt.Printf("🎯 根目录存档文件: %v\n", cfg.RootSaveFiles)
+			}
 		}
 
 		// 清理构建目录
