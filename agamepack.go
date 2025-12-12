@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,22 +14,22 @@ import (
 
 // 配置结构体
 type Config struct {
-	GameSourceDir     string
-	AppName           string
-	IconPath          string
-	PackageType       string
-	WineExec          string
-	WineCmd           string
-	WineSaveDir       string
-	RootSaveFiles     []string // 根目录存档文件
-	SavePattern       string
-	SaveStart         int
-	SaveEnd           int
-	AutoBuild         bool
-	ForceBuild        bool
-	OutputFilename    string
-	NWJSPath          string
-	SaveBaseDir       string
+	GameSourceDir      string
+	AppName            string
+	IconPath           string
+	PackageType        string
+	WineExec           string
+	WineCmd            string
+	WineSaveDir        string
+	RootSaveFiles      []string // 根目录存档文件
+	SavePattern        string
+	SaveStart          int
+	SaveEnd            int
+	AutoBuild          bool
+	ForceBuild         bool
+	OutputFilename     string
+	NWJSPath           string
+	SaveBaseDir        string
 	WineArchiveBaseDir string
 }
 
@@ -39,12 +38,12 @@ var cfg Config
 func main() {
 	// 初始化默认配置
 	cfg = Config{
-		WineCmd:           "proton-ge",
-		SavePattern:       "Save%d",
-		SaveStart:         1,
-		SaveEnd:           10,
-		NWJSPath:          filepath.Join(os.Getenv("HOME"), "App/nwjs-sdk/nw"),
-		SaveBaseDir:       filepath.Join(os.Getenv("HOME"), "Game/HTMLGame/NWJS/SAVE"),
+		WineCmd:            "proton-ge",
+		SavePattern:        "Save%d",
+		SaveStart:          1,
+		SaveEnd:            10,
+		NWJSPath:           filepath.Join(os.Getenv("HOME"), "App/nwjs-sdk/nw"),
+		SaveBaseDir:        filepath.Join(os.Getenv("HOME"), "Game/HTMLGame/NWJS/SAVE"),
 		WineArchiveBaseDir: filepath.Join(os.Getenv("HOME"), "Game/WineGame/Save"),
 	}
 
@@ -234,7 +233,32 @@ func runInteractiveMode() {
 	}
 	cfg.AppName = name
 
-	// 3. 图标文件
+	// 3. 输出文件名 - 关键修复：确保不会为空
+	defaultOutput := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, cfg.AppName)
+	if defaultOutput == "" {
+		defaultOutput = "Game"
+	}
+	if !strings.HasSuffix(defaultOutput, ".AppImage") {
+		defaultOutput += ".AppImage"
+	}
+	fmt.Printf("输出文件名 (默认: %s): ", defaultOutput)
+	var outputName string
+	fmt.Scanln(&outputName)
+	if outputName == "" {
+		outputName = defaultOutput
+	}
+	// 确保有.AppImage后缀
+	if !strings.HasSuffix(outputName, ".AppImage") {
+		outputName += ".AppImage"
+	}
+	cfg.OutputFilename = outputName
+
+	// 4. 图标文件
 	fmt.Print("自定义图标文件 (留空使用默认生成): ")
 	var iconPath string
 	fmt.Scanln(&iconPath)
@@ -252,7 +276,7 @@ func runInteractiveMode() {
 		}
 	}
 
-	// 4. 游戏类型
+	// 5. 游戏类型
 	fmt.Println("")
 	fmt.Println("游戏类型:")
 	fmt.Println("1. NW.js/HTML5 游戏 (package.json 或 index.html)")
@@ -534,7 +558,7 @@ func completeConfig() {
 		}
 	}
 
-	// 补全输出文件名
+	// 补全输出文件名 - 修复BUG：确保不会为空
 	if cfg.OutputFilename == "" {
 		cleanName := strings.Map(func(r rune) rune {
 			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
@@ -602,7 +626,7 @@ func buildAppImage() {
 		os.Exit(1)
 	}
 
-	// 存档处理 - 仅在game/目录内创建符号链接
+	// 存档处理
 	if cfg.PackageType == "wine" {
 		fmt.Println("🎯 Wine应用: 存档处理")
 		wineArchiveDir := filepath.Join(cfg.WineArchiveBaseDir, cfg.AppName)
@@ -704,12 +728,11 @@ func buildAppImage() {
 			fmt.Printf("✅ 总共创建 %d 个自定义存档链接\n", totalLinks)
 		}
 	} else {
-		// NW.js: 只在game/目录内创建符号链接
+		// NW.js: 统一存档目录
 		gameSaveDir := filepath.Join(cfg.SaveBaseDir, cfg.AppName)
 		os.MkdirAll(gameSaveDir, 0755)
 		
-		// 只在game/目录内创建链接
-		os.MkdirAll(filepath.Join(gameSubDir, "save"), 0755)
+		// 创建标准链接
 		createLink(gameSaveDir, filepath.Join(gameSubDir, "save"))
 		
 		// 为www目录创建链接（如果存在）
@@ -779,12 +802,12 @@ func isNWJSApp(dir string) bool {
 
 func isWineApp(dir string) bool {
 	var exeFiles []string
-	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".exe") {
-			exeFiles = append(exeFiles, d.Name())
+		if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".exe") {
+			exeFiles = append(exeFiles, info.Name())
 		}
 		return nil
 	})
@@ -793,11 +816,11 @@ func isWineApp(dir string) bool {
 
 func findExeFiles(dir string) []string {
 	var exeFiles []string
-	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".exe") {
+		if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".exe") {
 			relPath, _ := filepath.Rel(dir, path)
 			exeFiles = append(exeFiles, relPath)
 		}
@@ -808,11 +831,11 @@ func findExeFiles(dir string) []string {
 
 func findSaveDirectories(dir string) []string {
 	var saveDirs []string
-	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() {
+		if info.IsDir() {
 			dirName := strings.ToLower(filepath.Base(path))
 			if dirName == "save" || dirName == "saves" || dirName == "data" || dirName == "userdata" || dirName == "mcsc" {
 				relPath, _ := filepath.Rel(dir, path)
@@ -826,12 +849,12 @@ func findSaveDirectories(dir string) []string {
 
 func findRootSaveFiles(dir string) []string {
 	var saveFiles []string
-	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if !d.IsDir() {
-			filename := strings.ToLower(d.Name())
+		if !info.IsDir() {
+			filename := strings.ToLower(info.Name())
 			// 常见的存档文件扩展名
 			extensions := []string{".sav", ".save", ".dat", ".ini", ".cfg", ".conf", ".json", ".bin", ".srm"}
 			for _, ext := range extensions {
@@ -848,13 +871,13 @@ func findRootSaveFiles(dir string) []string {
 }
 
 func copyDir(src string, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		
 		// 跳过符号链接
-		if d.Type()&fs.ModeSymlink != 0 {
+		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
 		
@@ -864,7 +887,7 @@ func copyDir(src string, dst string) error {
 		}
 		dstPath := filepath.Join(dst, relPath)
 		
-		if d.IsDir() {
+		if info.IsDir() {
 			return os.MkdirAll(dstPath, 0755)
 		}
 		
