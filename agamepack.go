@@ -154,7 +154,7 @@ func showHelp() {
 	fmt.Println("用法: agamepack [选项]")
 	fmt.Println("")
 	fmt.Println("构建AppImage游戏包，支持NW.js和Wine/Windows游戏")
-	fmt.Println("【已移除AppStream metadata】完全移除了AppStream metadata以避免验证失败")
+	fmt.Println("支持目录重定向和自定义存档模式，100%只读文件系统安全")
 	fmt.Println("")
 	fmt.Println("选项:")
 	fmt.Println("  -r, --game-dir DIR     游戏源目录")
@@ -234,32 +234,7 @@ func runInteractiveMode() {
 	}
 	cfg.AppName = name
 
-	// 3. 输出文件名
-	defaultOutput := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			return r
-		}
-		return -1
-	}, cfg.AppName)
-	if defaultOutput == "" {
-		defaultOutput = "Game"
-	}
-	if !strings.HasSuffix(defaultOutput, ".AppImage") {
-		defaultOutput += ".AppImage"
-	}
-	fmt.Printf("输出文件名 (默认: %s): ", defaultOutput)
-	var outputName string
-	fmt.Scanln(&outputName)
-	if outputName == "" {
-		outputName = defaultOutput
-	}
-	// 确保有.AppImage后缀
-	if !strings.HasSuffix(outputName, ".AppImage") {
-		outputName += ".AppImage"
-	}
-	cfg.OutputFilename = outputName
-
-	// 4. 图标文件
+	// 3. 图标文件
 	fmt.Print("自定义图标文件 (留空使用默认生成): ")
 	var iconPath string
 	fmt.Scanln(&iconPath)
@@ -277,7 +252,7 @@ func runInteractiveMode() {
 		}
 	}
 
-	// 5. 游戏类型
+	// 4. 游戏类型
 	fmt.Println("")
 	fmt.Println("游戏类型:")
 	fmt.Println("1. NW.js/HTML5 游戏 (package.json 或 index.html)")
@@ -533,30 +508,6 @@ func completeConfig() {
 		fmt.Printf("✅ 使用目录名作为应用名称: %s\n", cfg.AppName)
 	}
 
-	// 补全输出文件名
-	if cfg.OutputFilename == "" {
-		cleanName := strings.Map(func(r rune) rune {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-				return r
-			}
-			return -1
-		}, cfg.AppName)
-		if cleanName == "" {
-			cleanName = "Game"
-		}
-		// 确保有.AppImage后缀
-		if !strings.HasSuffix(cleanName, ".AppImage") {
-			cleanName += ".AppImage"
-		}
-		cfg.OutputFilename = cleanName
-		fmt.Printf("📝 使用目录名作为默认文件名: %s\n", cfg.OutputFilename)
-	} else {
-		// 确保有.AppImage后缀
-		if !strings.HasSuffix(cfg.OutputFilename, ".AppImage") {
-			cfg.OutputFilename += ".AppImage"
-		}
-	}
-
 	// 补全包类型
 	if cfg.PackageType == "" {
 		if isNWJSApp(cfg.GameSourceDir) {
@@ -580,6 +531,30 @@ func completeConfig() {
 		} else {
 			cfg.WineExec = "game.exe"
 			fmt.Printf("⚠️  未指定可执行文件，使用默认: %s\n", cfg.WineExec)
+		}
+	}
+
+	// 补全输出文件名
+	if cfg.OutputFilename == "" {
+		cleanName := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+				return r
+			}
+			return -1
+		}, cfg.AppName)
+		if cleanName == "" {
+			cleanName = "Game"
+		}
+		// 确保有.AppImage后缀
+		if !strings.HasSuffix(cleanName, ".AppImage") {
+			cleanName += ".AppImage"
+		}
+		cfg.OutputFilename = cleanName
+		fmt.Printf("📝 使用目录名作为默认文件名: %s\n", cfg.OutputFilename)
+	} else {
+		// 确保有.AppImage后缀
+		if !strings.HasSuffix(cfg.OutputFilename, ".AppImage") {
+			cfg.OutputFilename += ".AppImage"
 		}
 	}
 }
@@ -627,7 +602,7 @@ func buildAppImage() {
 		os.Exit(1)
 	}
 
-	// 存档处理
+	// 存档处理 - 仅在game/目录内创建符号链接
 	if cfg.PackageType == "wine" {
 		fmt.Println("🎯 Wine应用: 存档处理")
 		wineArchiveDir := filepath.Join(cfg.WineArchiveBaseDir, cfg.AppName)
@@ -729,22 +704,27 @@ func buildAppImage() {
 			fmt.Printf("✅ 总共创建 %d 个自定义存档链接\n", totalLinks)
 		}
 	} else {
-		// NW.js: 统一存档目录
+		// NW.js: 只在game/目录内创建符号链接
 		gameSaveDir := filepath.Join(cfg.SaveBaseDir, cfg.AppName)
 		os.MkdirAll(gameSaveDir, 0755)
 		
-		// 创建标准链接
-		createLink(gameSaveDir, filepath.Join(appDir, "save"))
+		// 只在game/目录内创建链接
+		os.MkdirAll(filepath.Join(gameSubDir, "save"), 0755)
 		createLink(gameSaveDir, filepath.Join(gameSubDir, "save"))
-		os.MkdirAll(filepath.Join(gameSubDir, "www"), 0755)
-		createLink(gameSaveDir, filepath.Join(gameSubDir, "www", "save"))
+		
+		// 为www目录创建链接（如果存在）
+		wwwDir := filepath.Join(gameSubDir, "www")
+		if dirExists(wwwDir) {
+			os.MkdirAll(filepath.Join(wwwDir, "save"), 0755)
+			createLink(gameSaveDir, filepath.Join(wwwDir, "save"))
+		}
 		
 		// 根目录存档文件
 		if len(cfg.RootSaveFiles) > 0 {
 			fmt.Printf("🔗 NW.js根目录存档文件: %v\n", cfg.RootSaveFiles)
 			totalLinks := 0
 			for _, filename := range cfg.RootSaveFiles {
-				sourceFile := filepath.Join(appDir, filename)
+				sourceFile := filepath.Join(gameSubDir, filename)
 				targetFile := filepath.Join(gameSaveDir, filename)
 				
 				// 确保目标目录存在
@@ -938,6 +918,11 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
+func dirExists(path string) bool {
+	_, err := os.Stat(path)
+	return !os.IsNotExist(err)
+}
+
 func createLink(target string, link string) {
 	// 确保目标目录存在
 	os.MkdirAll(target, 0755)
@@ -1128,6 +1113,7 @@ func buildWithAppImageTool(appDir string) {
 	// 设置环境变量
 	env := os.Environ()
 	env = append(env, "ARCH=x86_64")
+	env = append(env, "APPIMAGE_EXTRACT_AND_RUN=1") // 关键：避免权限问题
 	
 	// 关键修正：使用相对路径
 	appDirName := filepath.Base(appDir) // 只取目录名，不包含build/
@@ -1178,7 +1164,7 @@ func buildWithAppImageTool(appDir string) {
 		// 提示手动构建
 		fmt.Println("\n💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
-		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", 
+		fmt.Printf("   ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 %s \"%s\" \"%s\"\n", 
 			appimagetoolPath, appDirName, cfg.OutputFilename)
 		return
 	}
@@ -1259,7 +1245,7 @@ func buildWithAppImageTool(appDir string) {
 		// 提示手动构建
 		fmt.Println("\n💡 手动构建命令:")
 		fmt.Printf("   cd build\n")
-		fmt.Printf("   ARCH=x86_64 %s \"%s\" \"%s\"\n", 
+		fmt.Printf("   ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 %s \"%s\" \"%s\"\n", 
 			appimagetoolPath, appDirName, cfg.OutputFilename)
 	}
 }
